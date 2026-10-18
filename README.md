@@ -1,6 +1,6 @@
 # Hogo Panel
 
-[hogo-meter](https://github.com/ysogabe/hogo-meter) と連携する、Android 化した Echo Show 5 向けのお世話パネル。
+[hogo-meter](https://hogo-meter-intro.akebi.dam-lab.work) と連携する、Android 化した Echo Show 5 向けのお世話パネル。
 
 お世話の最終実施時刻・経過時間の確認と記録を、常設のタッチ画面から行うためのアプリを開発します。無操作時には低輝度のフリップ時計を表示する方針です。
 
