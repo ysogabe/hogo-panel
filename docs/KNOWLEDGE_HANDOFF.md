@@ -45,7 +45,7 @@
 
 ## ビルドと端末導入
 
-以下は既存アプリでの手順です。本リポジトリにはまだ `gradlew`、`scripts/install.sh`、APK はありません。
+Hogo Panel のビルドと導入の手順は [BUILD.md](BUILD.md) を参照してください。以下は既存アプリでの手順です。
 
 ```sh
 # 既存の miharashi-panel 内での検証・ビルド
