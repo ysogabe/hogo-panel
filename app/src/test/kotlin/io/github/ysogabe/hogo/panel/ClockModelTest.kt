@@ -102,4 +102,20 @@ class ClockModelTest {
         assertFalse(m.isFlipping(1_001_100))
         assertArrayEquals(intArrayOf(1, 2, 0, 1), m.digits)
     }
+
+    @Test
+    fun dateRollsOverWithMidnightDigitsAndFollowsTimezoneJump() {
+        val m = started(23, 59, 59)
+        val before = m.dateLabel
+        m.update(at(23, 59, 59, 500), 1_000_500)
+        assertEquals(before, m.dateLabel)
+        m.update(at(0, 0, 0, 20) + 86_400_000L, 1_001_020)
+        assertArrayEquals(intArrayOf(0, 0, 0, 0), m.digits)
+        assertEquals(ClockMath.dateLabelOf(at(0, 0) + 86_400_000L), m.dateLabel)
+        assertTrue(m.dateLabel != before)
+        // 時刻・タイムゾーンの大きな補正は日付も即時に現在へ合わせる（フリップなし）。
+        m.update(at(0, 0, 30) - 9 * 3_600_000L, 1_031_020)
+        assertEquals(ClockMath.dateLabelOf(at(0, 0, 30) - 9 * 3_600_000L), m.dateLabel)
+        assertNull(m.previousDigits)
+    }
 }

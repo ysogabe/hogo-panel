@@ -8,6 +8,10 @@ class ClockModel {
     var digits: IntArray = intArrayOf(0, 0, 0, 0)
         private set
 
+    /** 桁と同じ現地時刻から求めた `yyyy/MM/dd（曜）`。桁と一緒に更新し、フリップは伴わない。 */
+    var dateLabel: String = ClockMath.dateLabelOf(0L)
+        private set
+
     /** フリップ前の桁。フリップ中のみ非 null。 */
     var previousDigits: IntArray? = null
         private set
@@ -21,6 +25,7 @@ class ClockModel {
     /** 現在時刻へ直接合わせ、進行中のフリップを破棄する。 */
     fun snap(localMillis: Long, elapsedMs: Long) {
         digits = ClockMath.digitsOf(localMillis)
+        dateLabel = ClockMath.dateLabelOf(localMillis)
         previousDigits = null
         sample(localMillis, elapsedMs)
     }
@@ -36,6 +41,7 @@ class ClockModel {
             jumped || minuteDelta < 0L || minuteDelta > 1L -> snap(localMillis, elapsedMs)
             minuteDelta == 1L -> {
                 val next = ClockMath.digitsOf(localMillis)
+                dateLabel = ClockMath.dateLabelOf(localMillis)
                 val changed = BooleanArray(4) { digits[it] != next[it] }
                 if (changed.any { it }) {
                     previousDigits = digits
