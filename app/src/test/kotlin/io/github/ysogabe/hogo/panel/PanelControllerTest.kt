@@ -264,6 +264,24 @@ class PanelControllerTest {
     }
 
     @Test
+    fun cancelAfterHeldIdleRestartsTheWaitInsteadOfEnteringTheClock() {
+        scenario(Scenario.SOON)
+        controller.onDown(med1.centerX, med1.centerY)
+        now += 180_000
+        fire(PanelTimer.IDLE)
+        assertEquals(Screen.HOME, model.screen)
+        controller.onCancel()
+        assertEquals(Screen.HOME, model.screen)
+        assertEquals(180_000L, host.timers[PanelTimer.IDLE])
+        fire(PanelTimer.IDLE)
+        assertEquals(Screen.HOME, model.screen)
+        assertEquals(180_000L, host.timers[PanelTimer.IDLE])
+        now += 180_000
+        fire(PanelTimer.IDLE)
+        assertEquals(Screen.CLOCK, model.screen)
+    }
+
+    @Test
     fun cancelledGestureNeverOperatesAndEndsConsumption() {
         scenario(Scenario.SOON)
         controller.onDown(med1.centerX, med1.centerY)

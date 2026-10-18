@@ -135,7 +135,12 @@ class PanelController(
         gate.cancel()
         host.cancel(PanelTimer.LONG_PRESS)
         press = null
-        if (model.screen == Screen.HOME) scheduleIdle(nowMs())
+        if (model.screen == Screen.HOME) {
+            // 保留していた待機時間の満了直後に中断されても、中断した時刻から数え直す。
+            val now = nowMs()
+            model.markInteraction(now)
+            scheduleIdle(now)
+        }
         host.requestRedraw()
     }
 
