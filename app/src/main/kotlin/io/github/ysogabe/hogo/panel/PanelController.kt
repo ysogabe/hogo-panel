@@ -1,6 +1,6 @@
 package io.github.ysogabe.hogo.panel
 
-enum class PanelTimer { UNLOCK, TOAST, IDLE, LONG_PRESS, TICK }
+enum class PanelTimer { UNLOCK, TOAST, IDLE, LONG_PRESS, TICK, PULSE }
 
 enum class PanelKey { NEXT, PREVIOUS, ACTIVATE, ESCAPE, OTHER }
 
@@ -42,6 +42,11 @@ class PanelController(
     val pressed: Hit? get() = press
     val gestureActive: Boolean get() = gate.gestureActive
 
+    private var pulseScheduled = false
+
+    /** 当日・超過の薬カードを明滅させている間だけ true。 */
+    val pulsing: Boolean get() = pulseScheduled
+
     // ---- ライフサイクル ----
 
     fun resume() {
@@ -68,6 +73,7 @@ class PanelController(
     }
 
     private fun cancelAll() {
+        pulseScheduled = false
         PanelTimer.entries.forEach { host.cancel(it) }
     }
 
@@ -251,6 +257,31 @@ class PanelController(
                     host.schedule(PanelTimer.TICK, ClockMath.untilNextMinuteMs(localMillis()) + ClockMath.BOUNDARY_MARGIN_MS)
                 }
             }
+            PanelTimer.PULSE -> {
+                // 条件を外れていたら再予約しない（停止後にコールバックが残っても動き続けない）。
+                if (pulseScheduled && pulseNeeded()) {
+                    host.requestRedraw()
+                    host.schedule(PanelTimer.PULSE, PulseMath.FRAME_MS)
+                } else {
+                    pulseScheduled = false
+                }
+            }
+        }
+    }
+
+    /** ホームで確認・メニューが開いておらず、当日・超過の薬が未記録で残っているときだけ動かす。 */
+    private fun pulseNeeded(): Boolean =
+        model.screen == Screen.HOME && !model.menuOpen && model.confirmation == null &&
+            model.warnings().any { PulseMath.animates(it.phase) }
+
+    private fun syncPulse() {
+        val need = pulseNeeded()
+        if (need && !pulseScheduled) {
+            pulseScheduled = true
+            host.schedule(PanelTimer.PULSE, PulseMath.FRAME_MS)
+        } else if (!need && pulseScheduled) {
+            pulseScheduled = false
+            host.cancel(PanelTimer.PULSE)
         }
     }
 
@@ -283,6 +314,7 @@ class PanelController(
 
     /** モデルの状態に合わせて、ホームで必要なタイマーだけを予約し直す。 */
     private fun syncTimers(now: Long) {
+        syncPulse()
         host.cancel(PanelTimer.UNLOCK)
         host.cancel(PanelTimer.TOAST)
         if (model.screen != Screen.HOME) return

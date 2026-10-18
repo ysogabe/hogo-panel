@@ -39,7 +39,7 @@ class PanelView(
         canvas.scale(stage.scale, stage.scale)
         canvas.clipRect(0f, 0f, ClockMath.BASE_WIDTH, ClockMath.BASE_HEIGHT)
         drawHeader(canvas)
-        if (reminder) drawMeds(canvas)
+        if (reminder) drawMeds(canvas, now)
         drawCares(canvas, reminder, now)
         when {
             model.menuOpen -> drawMenu(canvas)
@@ -71,13 +71,19 @@ class PanelView(
 
     // ---- 薬カード ----
 
-    private fun drawMeds(c: Canvas) {
+    private fun drawMeds(c: Canvas, now: Long) {
+        val dim = if (controller.pulsing) PulseMath.dim(now) else 0f
         val warnings = model.warnings()
         val boxes = PanelLayout.medBoxes(warnings.size)
         warnings.forEachIndexed { i, w ->
             val box = boxes[i]
             val s = MedStyle.of(w.phase)
-            roundBox(c, box, 20f, s.fill, s.border)
+            val t = if (PulseMath.animates(w.phase)) dim else 0f
+            roundBox(
+                c, box, 20f,
+                PulseMath.lerpColor(s.fill, BG_ATTENTION, PulseMath.FILL_DIM * t),
+                PulseMath.lerpColor(s.border, BG_ATTENTION, PulseMath.BORDER_DIM * t),
+            )
             val iconBox = Box(box.left + 24f, box.centerY - 32f, 64f, 64f)
             roundBox(c, iconBox, 20f, s.iconFill, null)
             val glyph = if (w.occurrence.icon == MedIcon.PILL) Icon.PILL else Icon.DROP
