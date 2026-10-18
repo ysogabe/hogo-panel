@@ -2,7 +2,12 @@
 
 2026-10-18 に、Miharashi Panel の開発成果を新しい Hogo Panel へ引き継ぐために整理しました。
 
-- [BUILD.md](BUILD.md): 時計 PoC のビルド手順と、シリアルを明示した端末導入。
+- [routine-ui/prd.md](routine-ui/prd.md): 普段はお世話だけ、2日前から投薬が現れる画面の要求。
+- [routine-ui/design.md](routine-ui/design.md): 薬名と短い警告、2日前の判定・実施確認の設計案。
+- [routine-ui/prototype.html](routine-ui/prototype.html): 架空データで操作できる画面案（ブラウザで開く。HTML 段階）。
+- [routine-ui/design.md](routine-ui/design.md#android-操作モック): Android の操作モック（架空データ、メモリ内のみ）の実装と試し方。
+- [routine-ui/verification.md](routine-ui/verification.md): HTML 段階と Android 段階の確認記録。
+- [BUILD.md](BUILD.md): ビルド手順と、シリアルを明示した端末導入。
 - [KNOWLEDGE_HANDOFF.md](KNOWLEDGE_HANDOFF.md): 端末条件、Android の実装方針、導入・起動・通信・検証の知見。
 - [IDLE_CLOCK.md](IDLE_CLOCK.md): 消灯に代わる低輝度フリップ時計の画面・遷移・更新・誤操作防止仕様。
 - [HOGO_METER_INTEGRATION.md](HOGO_METER_INTEGRATION.md): 連携の目的、参照先、実装前に決めること。

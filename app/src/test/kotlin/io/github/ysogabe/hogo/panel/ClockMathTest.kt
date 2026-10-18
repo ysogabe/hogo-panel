@@ -63,4 +63,12 @@ class ClockMathTest {
     fun clockSizeMatchesReferenceLayout() {
         assertEquals(626f, ClockMath.CLOCK_WIDTH, 0f)
     }
+
+    @Test
+    fun untilNextMinuteIsTimeToTheMinuteBoundary() {
+        assertEquals(60_000L, ClockMath.untilNextMinuteMs(0L))
+        assertEquals(1L, ClockMath.untilNextMinuteMs(59_999L))
+        assertEquals(30_000L, ClockMath.untilNextMinuteMs(90_000L))
+        assertEquals(1L, ClockMath.untilNextMinuteMs(-1L))
+    }
 }

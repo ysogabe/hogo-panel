@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.View
@@ -26,6 +27,26 @@ class FlipClockView(context: Context) : View(context) {
     private val seamPaint = Paint().apply { color = Color.BLACK }
     private val colonPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val digitBounds = Rect().also { digitPaint.getTextBounds("0", 0, 1, it) }
+    private val badgeFill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val badgeStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = BADGE_STROKE
+    }
+    private val badgeText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        textSize = BADGE_TEXT_SIZE
+    }
+    private val badgeRect = RectF()
+
+    /**
+     * 時計の下に添える短い札（警告中の薬名だけ）。時計と一緒に動かして焼き付きを避ける。
+     * 空なら従来どおり時計だけを描く。
+     */
+    var badges: List<String> = emptyList()
+        set(value) {
+            field = value
+            invalidate()
+        }
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -78,7 +99,9 @@ class FlipClockView(context: Context) : View(context) {
         val max = ClockMath.maxOffsets(areaW, areaH)
         val shade = ClockMath.shade(elapsed)
         val left = (areaW - ClockMath.CLOCK_WIDTH) / 2f + ClockMath.offsetX(elapsed, max[0])
-        val top = (areaH - ClockMath.CLOCK_HEIGHT) / 2f + ClockMath.offsetY(elapsed, max[1])
+        // 札があるときは、時計の下に札が収まるよう全体を少し上げる。
+        val lift = if (badges.isEmpty()) 0f else BADGE_LIFT
+        val top = (areaH - ClockMath.CLOCK_HEIGHT) / 2f - lift + ClockMath.offsetY(elapsed, max[1])
 
         cardPaint.color = scaled(CARD_COLOR, shade)
         digitPaint.color = scaled(DIGIT_COLOR, shade)
@@ -97,7 +120,28 @@ class FlipClockView(context: Context) : View(context) {
                 else -> 0f
             }
         }
+        if (badges.isNotEmpty()) drawBadges(canvas, areaW / 2f + ClockMath.offsetX(elapsed, max[0]), top, shade)
         canvas.restore()
+    }
+
+    /** [centerX] を中心に、時計の下端から [BADGE_GAP] 下へ札を並べる。 */
+    private fun drawBadges(canvas: Canvas, centerX: Float, clockTop: Float, shade: Float) {
+        badgeFill.color = scaled(BADGE_FILL, shade)
+        badgeStroke.color = scaled(BADGE_BORDER, shade)
+        badgeText.color = scaled(BADGE_TEXT, shade)
+        val widths = badges.map { badgeText.measureText(it) + BADGE_PAD_X * 2 }
+        val total = widths.sum() + BADGE_SPACING * (badges.size - 1)
+        var x = centerX - total / 2f
+        val top = clockTop + ClockMath.CARD_HEIGHT + BADGE_GAP
+        val metrics = badgeText.fontMetrics
+        val baseline = top + BADGE_HEIGHT / 2f - (metrics.ascent + metrics.descent) / 2f
+        for ((i, name) in badges.withIndex()) {
+            badgeRect.set(x, top, x + widths[i], top + BADGE_HEIGHT)
+            canvas.drawRoundRect(badgeRect, BADGE_CORNER, BADGE_CORNER, badgeFill)
+            canvas.drawRoundRect(badgeRect, BADGE_CORNER, BADGE_CORNER, badgeStroke)
+            canvas.drawText(name, badgeRect.centerX(), baseline, badgeText)
+            x += widths[i] + BADGE_SPACING
+        }
     }
 
     private fun drawColon(canvas: Canvas, left: Float, top: Float) {
@@ -174,5 +218,17 @@ class FlipClockView(context: Context) : View(context) {
         const val CORNER = 14f
         const val SEAM = 3f
         const val COLON_DOT = 14f
+
+        const val BADGE_FILL = 0xFF2D2818.toInt()
+        const val BADGE_BORDER = 0xFF786638.toInt()
+        const val BADGE_TEXT = 0xFFD9C17E.toInt()
+        const val BADGE_TEXT_SIZE = 23f
+        const val BADGE_HEIGHT = 50f
+        const val BADGE_PAD_X = 18f
+        const val BADGE_SPACING = 18f
+        const val BADGE_STROKE = 1f
+        const val BADGE_CORNER = 11f
+        const val BADGE_GAP = 36f
+        const val BADGE_LIFT = 18f
     }
 }
