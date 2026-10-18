@@ -37,6 +37,14 @@ class FlipClockView(context: Context) : View(context) {
         textSize = BADGE_TEXT_SIZE
     }
     private val badgeRect = RectF()
+    private val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.LEFT
+        textSize = DATE_TEXT_SIZE
+    }
+    private val dateBounds = Rect().also { datePaint.getTextBounds("0", 0, 1, it) }
+    private val glyphBounds = Rect()
+    private var dateText = ""
+    private var dateXs = FloatArray(0)
 
     /**
      * 時計の下に添える短い札（警告中の薬名だけ）。時計と一緒に動かして焼き付きを避ける。
@@ -96,12 +104,15 @@ class FlipClockView(context: Context) : View(context) {
         if (scale <= 0f) return
         val areaW = width / scale
         val areaH = height / scale
-        val max = ClockMath.maxOffsets(areaW, areaH)
+        val hasBadges = badges.isNotEmpty()
+        val groupHeight = ClockMath.groupHeight(hasBadges)
+        val badgeWidths = badgeWidths()
+        val groupWidth = maxOf(ClockMath.CLOCK_WIDTH, badgeWidths.sum() + BADGE_SPACING * (badges.size - 1).coerceAtLeast(0))
+        val max = ClockMath.maxOffsets(areaW, areaH, groupWidth, groupHeight)
         val shade = ClockMath.shade(elapsed)
+        // 時刻・日付・札のまとまりを画面の中央に置き、そのまま動かす。
         val left = (areaW - ClockMath.CLOCK_WIDTH) / 2f + ClockMath.offsetX(elapsed, max[0])
-        // 札があるときは、時計の下に札が収まるよう全体を少し上げる。
-        val lift = if (badges.isEmpty()) 0f else BADGE_LIFT
-        val top = (areaH - ClockMath.CLOCK_HEIGHT) / 2f - lift + ClockMath.offsetY(elapsed, max[1])
+        val top = (areaH - groupHeight) / 2f + ClockMath.offsetY(elapsed, max[1])
 
         cardPaint.color = scaled(CARD_COLOR, shade)
         digitPaint.color = scaled(DIGIT_COLOR, shade)
@@ -120,23 +131,58 @@ class FlipClockView(context: Context) : View(context) {
                 else -> 0f
             }
         }
-        if (badges.isNotEmpty()) drawBadges(canvas, areaW / 2f + ClockMath.offsetX(elapsed, max[0]), top, shade)
+        val dateTop = top + ClockMath.CLOCK_HEIGHT + ClockMath.DATE_GAP
+        drawDate(canvas, left, dateTop)
+        if (hasBadges) {
+            val badgeTop = dateTop + ClockMath.DATE_HEIGHT + ClockMath.BADGE_GAP
+            drawBadges(canvas, areaW / 2f + ClockMath.offsetX(elapsed, max[0]), badgeTop, badgeWidths, shade)
+        }
         canvas.restore()
     }
 
-    /** [centerX] を中心に、時計の下端から [BADGE_GAP] 下へ札を並べる。 */
-    private fun drawBadges(canvas: Canvas, centerX: Float, clockTop: Float, shade: Float) {
+    /**
+     * 日付を時計と同じ幅に置く。文字サイズは固定で字間だけを調整し、
+     * 先頭・末尾の字の余白（全角括弧など）を除いた見た目の左右端を時刻全体の幅に揃える。
+     */
+    private fun drawDate(canvas: Canvas, left: Float, top: Float) {
+        val text = model.dateLabel
+        if (text != dateText) layoutDate(text)
+        datePaint.color = digitPaint.color
+        val baseline = top + ClockMath.DATE_HEIGHT / 2f + dateBounds.height() / 2f
+        for (i in text.indices) canvas.drawText(text, i, i + 1, left + dateXs[i], baseline, datePaint)
+    }
+
+    private fun layoutDate(text: String) {
+        dateText = text
+        val advances = FloatArray(text.length)
+        datePaint.getTextWidths(text, advances)
+        datePaint.getTextBounds(text, 0, 1, glyphBounds)
+        val inkLeft = glyphBounds.left.toFloat()
+        datePaint.getTextBounds(text, text.length - 1, text.length, glyphBounds)
+        val inkRightInset = advances.last() - glyphBounds.right
+        val natural = advances.sum() - inkLeft - inkRightInset
+        val tracking = if (text.length > 1) (ClockMath.CLOCK_WIDTH - natural) / (text.length - 1) else 0f
+        dateXs = FloatArray(text.length)
+        var x = -inkLeft
+        for (i in text.indices) {
+            dateXs[i] = x
+            x += advances[i] + tracking
+        }
+    }
+
+    private fun badgeWidths(): List<Float> = badges.map { badgeText.measureText(it) + BADGE_PAD_X * 2 }
+
+    /** [centerX] を中心に、[top] から札を並べる。 */
+    private fun drawBadges(canvas: Canvas, centerX: Float, top: Float, widths: List<Float>, shade: Float) {
         badgeFill.color = scaled(BADGE_FILL, shade)
         badgeStroke.color = scaled(BADGE_BORDER, shade)
         badgeText.color = scaled(BADGE_TEXT, shade)
-        val widths = badges.map { badgeText.measureText(it) + BADGE_PAD_X * 2 }
         val total = widths.sum() + BADGE_SPACING * (badges.size - 1)
         var x = centerX - total / 2f
-        val top = clockTop + ClockMath.CARD_HEIGHT + BADGE_GAP
         val metrics = badgeText.fontMetrics
-        val baseline = top + BADGE_HEIGHT / 2f - (metrics.ascent + metrics.descent) / 2f
+        val baseline = top + ClockMath.BADGE_HEIGHT / 2f - (metrics.ascent + metrics.descent) / 2f
         for ((i, name) in badges.withIndex()) {
-            badgeRect.set(x, top, x + widths[i], top + BADGE_HEIGHT)
+            badgeRect.set(x, top, x + widths[i], top + ClockMath.BADGE_HEIGHT)
             canvas.drawRoundRect(badgeRect, BADGE_CORNER, BADGE_CORNER, badgeFill)
             canvas.drawRoundRect(badgeRect, BADGE_CORNER, BADGE_CORNER, badgeStroke)
             canvas.drawText(name, badgeRect.centerX(), baseline, badgeText)
@@ -214,21 +260,19 @@ class FlipClockView(context: Context) : View(context) {
     private companion object {
         const val CARD_COLOR = 0xFF161616.toInt()
         const val DIGIT_COLOR = 0xFF707070.toInt()
-        const val DIGIT_TEXT_SIZE = 170f
-        const val CORNER = 14f
-        const val SEAM = 3f
-        const val COLON_DOT = 14f
+        const val DIGIT_TEXT_SIZE = 221f
+        const val DATE_TEXT_SIZE = 62f
+        const val CORNER = 18f
+        const val SEAM = 4f
+        const val COLON_DOT = 18f
 
         const val BADGE_FILL = 0xFF2D2818.toInt()
         const val BADGE_BORDER = 0xFF786638.toInt()
         const val BADGE_TEXT = 0xFFD9C17E.toInt()
         const val BADGE_TEXT_SIZE = 23f
-        const val BADGE_HEIGHT = 50f
         const val BADGE_PAD_X = 18f
         const val BADGE_SPACING = 18f
         const val BADGE_STROKE = 1f
         const val BADGE_CORNER = 11f
-        const val BADGE_GAP = 36f
-        const val BADGE_LIFT = 18f
     }
 }
