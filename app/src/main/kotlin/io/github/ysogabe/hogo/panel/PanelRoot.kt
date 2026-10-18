@@ -19,7 +19,8 @@ import java.util.TimeZone
 @SuppressLint("ViewConstructor") // コードからだけ生成する（XML では使わない）
 class PanelRoot(
     context: Context,
-    private val onBrightness: (clockOn: Boolean) -> Unit,
+    /** 時計中のウィンドウ輝度。null は指定の解除（端末の明るさ設定に戻す）。 */
+    private val onBrightness: (level: Float?) -> Unit,
 ) : FrameLayout(context), PanelHost {
     private val handler = Handler(Looper.getMainLooper())
     private val model = PanelModel(SystemClock.elapsedRealtime())
@@ -27,6 +28,16 @@ class PanelRoot(
     private val home = PanelView(context, model, controller)
     private val clock = FlipClockView(context)
     private val timers = PanelTimer.entries.associateWith { timer -> Runnable { controller.onTimer(timer) } }
+    private val brightnessRunnable: Runnable = Runnable { brightness.onTimer() }
+    private val brightness: ClockBrightnessKeeper = ClockBrightnessKeeper(
+        localMillis = ::localNow,
+        apply = { onBrightness(it) },
+        schedule = { delayMs ->
+            handler.removeCallbacks(brightnessRunnable)
+            handler.postDelayed(brightnessRunnable, delayMs)
+        },
+        cancel = { handler.removeCallbacks(brightnessRunnable) },
+    )
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
     init {
@@ -50,6 +61,7 @@ class PanelRoot(
 
     private fun stopEverything() {
         handler.removeCallbacksAndMessages(null)
+        brightness.stop()
         clock.stop()
     }
 
@@ -60,7 +72,7 @@ class PanelRoot(
 
     private fun localNow(): Long {
         val wall = System.currentTimeMillis()
-        return wall + TimeZone.getDefault().getOffset(wall)
+        return ClockBrightness.localMillis(wall, TimeZone.getDefault().getOffset(wall))
     }
 
     // ---- PanelHost ----
@@ -85,12 +97,13 @@ class PanelRoot(
             home.visibility = INVISIBLE
             clock.visibility = VISIBLE
             clock.start()
+            brightness.start()
         } else {
+            brightness.stop()
             clock.stop()
             clock.visibility = GONE
             home.visibility = VISIBLE
         }
-        onBrightness(clockOn)
     }
 
     // ---- 入力 ----
