@@ -6,7 +6,9 @@
 
 ## 現在の状態
 
-開発開始用のリポジトリです。既存の Miharashi Panel で得た知見と待機時計の引き継ぎ仕様を保存しています。Android アプリ本体、hogo-meter との通信、APK、ビルド環境はまだ含みません。
+最初の段階として、起動直後から低輝度のフリップ時計だけを表示する Android アプリ（PoC）があります。操作画面、待機設定、タッチ復帰、hogo-meter との通信、HOME 指定・自動起動はまだありません。APK は配布せず、[ビルドと端末導入](docs/BUILD.md) の手順で作ります。
+
+この PoC のビルドは確認済みです。実機での表示・Wi-Fi デバッグでの導入は、確認後に別途記録します。
 
 ## 対象端末
 
@@ -15,6 +17,7 @@ Android 化した Echo Show 5 を想定しています。既存アプリで確�
 ## ドキュメント
 
 - [開発資料の入口](docs/README.md)
+- [ビルドと端末導入](docs/BUILD.md)
 - [Echo Show 5 アプリ開発の知見](docs/KNOWLEDGE_HANDOFF.md)
 - [消灯時・無操作時の時計表示仕様](docs/IDLE_CLOCK.md)
 - [hogo-meter 連携の引き継ぎ](docs/HOGO_METER_INTEGRATION.md)

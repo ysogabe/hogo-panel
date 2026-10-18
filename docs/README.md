@@ -2,6 +2,7 @@
 
 2026-10-18 に、Miharashi Panel の開発成果を新しい Hogo Panel へ引き継ぐために整理しました。
 
+- [BUILD.md](BUILD.md): 時計 PoC のビルド手順と、シリアルを明示した端末導入。
 - [KNOWLEDGE_HANDOFF.md](KNOWLEDGE_HANDOFF.md): 端末条件、Android の実装方針、導入・起動・通信・検証の知見。
 - [IDLE_CLOCK.md](IDLE_CLOCK.md): 消灯に代わる低輝度フリップ時計の画面・遷移・更新・誤操作防止仕様。
 - [HOGO_METER_INTEGRATION.md](HOGO_METER_INTEGRATION.md): 連携の目的、参照先、実装前に決めること。
