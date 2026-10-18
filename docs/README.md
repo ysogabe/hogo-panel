@@ -2,6 +2,9 @@
 
 2026-10-18 に、Miharashi Panel の開発成果を新しい Hogo Panel へ引き継ぐために整理しました。
 
+- [routine-ui/prd.md](routine-ui/prd.md): 猫のお世話・週次月次の予定通知と実施確認の要求。
+- [routine-ui/design.md](routine-ui/design.md): 画面遷移・Google連携方針・例外状態の設計案。
+- [routine-ui/prototype.html](routine-ui/prototype.html): 架空データで操作できる画面案（ブラウザで開く）。
 - [BUILD.md](BUILD.md): 時計 PoC のビルド手順と、シリアルを明示した端末導入。
 - [KNOWLEDGE_HANDOFF.md](KNOWLEDGE_HANDOFF.md): 端末条件、Android の実装方針、導入・起動・通信・検証の知見。
 - [IDLE_CLOCK.md](IDLE_CLOCK.md): 消灯に代わる低輝度フリップ時計の画面・遷移・更新・誤操作防止仕様。
