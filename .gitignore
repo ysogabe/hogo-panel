@@ -1,0 +1,25 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+local.properties
+*.token
+*.secret
+secrets/
+*.jks
+*.keystore
+keystore.properties
+
+# Android build output
+.gradle/
+.kotlin/
+**/build/
+*.apk
+*.aab
+captures/
+
+# Editor and OS files
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
