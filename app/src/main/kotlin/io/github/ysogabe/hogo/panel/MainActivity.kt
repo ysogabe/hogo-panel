@@ -6,32 +6,50 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
 
+/**
+ * 架空データだけの操作モック。通常はホーム、3 分の無操作か時計ボタンで低輝度の時計。
+ * 通信・保存・権限は持たない。
+ */
 class MainActivity : Activity() {
-    private lateinit var clockView: FlipClockView
+    private lateinit var root: PanelRoot
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.attributes = window.attributes.also { it.screenBrightness = CLOCK_BRIGHTNESS }
-        clockView = FlipClockView(this)
-        setContentView(clockView)
+        root = PanelRoot(this) { clock -> applyBrightness(clock) }
+        setContentView(root)
         hideSystemBars()
     }
 
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        clockView.start()
+        root.resume()
     }
 
     override fun onPause() {
-        clockView.stop()
+        root.pause()
         super.onPause()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!root.handleBack()) {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemBars()
+    }
+
+    /** 時計だけウィンドウ輝度 0.05。ホームは端末の明るさ設定に戻す。 */
+    private fun applyBrightness(clock: Boolean) {
+        window.attributes = window.attributes.also {
+            it.screenBrightness = if (clock) CLOCK_BRIGHTNESS else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        }
     }
 
     private fun hideSystemBars() {

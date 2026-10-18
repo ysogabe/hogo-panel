@@ -49,6 +49,9 @@ object ClockMath {
         return min(IDLE_TICK_MS, untilBoundary + BOUNDARY_MARGIN_MS)
     }
 
+    /** 次の分境界までの時間。ホームの時刻表示を分が変わる直後に更新するために使う。 */
+    fun untilNextMinuteMs(localMillis: Long): Long = MINUTE_MS - Math.floorMod(localMillis, MINUTE_MS)
+
     /** 壁時計と経過時間の進みの差が閾値を超えたら、時刻（またはタイムゾーン）の補正とみなす。 */
     fun isClockJump(localDeltaMs: Long, elapsedDeltaMs: Long): Boolean =
         abs(localDeltaMs - elapsedDeltaMs) > CLOCK_JUMP_THRESHOLD_MS
