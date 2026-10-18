@@ -61,3 +61,8 @@ Sol highは必須0・推奨1・参考1。CANCEL直後の待機再計測と旧版
 全差分をSol（gpt-6.1-sol、high）とOpus（claude-opus-5-5、high）が独立確認。SolはAC1〜AC6すべてをプロトタイプとして充足、必須0。両者が推奨した「実機検証済みの範囲をREADME・時計仕様・設計にも同期」を`9d1fe73`で反映し、見送りなし。コードの追加変更はない。
 
 最終OpusもHigh/Medium/Low各0。単独のcdでのcwd変更もT3側で戻され、Skillツールのsecurity-reviewは別プロジェクト側のorigin/HEAD未定義で停止した。そのためHogoのorigin/HEADからの全差分に同じ手順を手作業で適用し、同期Claude Agentで独立確認した。確度の高い脆弱性候補なし。固定値のHTML描画やexported Activity等についても外部入力経路がないことを確認。スキル本体が完走したとは扱わない。
+
+## 当日・超過の明滅（0.2.1）
+
+- **確認済み（開発機）:** `./gradlew testDebugUnitTest assembleDebug lintDebug` が成功。単体テスト101件（既存92件＋明滅の周期・対象・開始停止9件）。HTML 案はスクリプトの構文のみ確認。
+- **未確認:** 実機の見え方、人の指での操作、実際の輝度での読みやすさ。親が確認する。
