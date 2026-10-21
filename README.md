@@ -24,6 +24,7 @@ Android 化した Echo Show 5 を対象にしています。今回の実機は L
 - [Echo Show 5 アプリ開発の知見](docs/KNOWLEDGE_HANDOFF.md)
 - [消灯時・無操作時の時計表示仕様](docs/IDLE_CLOCK.md)
 - [hogo-meter 連携の引き継ぎ](docs/HOGO_METER_INTEGRATION.md)
+- [Google カレンダー連携の配置検討](docs/CALENDAR_INTEGRATION.md)
 
 ## 名前
 
