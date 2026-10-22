@@ -460,11 +460,11 @@ class ScheduleFetcherTest {
         }
         f.resume()
         completeFetch()
-        assertEquals(listOf<String?>(PanelModel.STATUS_FETCH_FAILED), seen)
+        assertEquals(listOf<String?>(PanelModel.STATUS_UNFETCHED_OFFLINE), seen)
         assertEquals(listOf(30_000L), poster.pendingDelays()) // 次の間隔で取り直す
         poster.advance(30_000)
         completeFetch()
-        assertEquals(listOf(PanelModel.STATUS_FETCH_FAILED, null), seen)
+        assertEquals(listOf(PanelModel.STATUS_UNFETCHED_OFFLINE, null), seen)
         assertNull(model.statusText())
         assertFalse(model.lastFetchFailed)
         assertEquals(listOf(15_000L), poster.pendingDelays())

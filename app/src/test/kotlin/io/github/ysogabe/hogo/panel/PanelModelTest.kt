@@ -4,6 +4,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -469,13 +470,45 @@ class PanelModelTest {
         val first = apiModel()
         first.applySchedule(ScheduleResult.Failed(FetchError.TIMEOUT), apiToday)
         assertTrue(first.warnings().isEmpty())
-        assertEquals("予定を取得できません", first.statusText())
+        assertEquals("予定を未取得（通信できません）", first.statusText())
 
         val afterDisabled = apiModel()
         afterDisabled.applySchedule(ScheduleResult.Disabled(null), apiToday)
         afterDisabled.applySchedule(ScheduleResult.Failed(FetchError.INVALID), apiToday)
         assertTrue(afterDisabled.warnings().isEmpty())
         assertEquals("予定を取得できません", afterDisabled.statusText())
+    }
+
+    @Test
+    fun aFirstFailureSaysUnfetchedAndALaterFailureAfterLoadedSaysCannotFetch() {
+        val first = apiModel()
+        first.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday)
+        assertEquals(PanelModel.STATUS_UNFETCHED_OFFLINE, first.statusText())
+        assertEquals("予定を未取得（通信できません）", first.statusText())
+        // 失敗が続いても未取得のまま。
+        first.applySchedule(ScheduleResult.Failed(FetchError.TIMEOUT), apiToday)
+        assertEquals("予定を未取得（通信できません）", first.statusText())
+
+        val afterLoaded = apiModel()
+        afterLoaded.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        afterLoaded.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday)
+        assertEquals("予定を取得できません", afterLoaded.statusText())
+        assertNotEquals(first.statusText(), afterLoaded.statusText())
+    }
+
+    @Test
+    fun aSuccessAfterAFirstFailureClearsTheUnfetchedStatus() {
+        val m = apiModel()
+        m.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday)
+        assertEquals("予定を未取得（通信できません）", m.statusText())
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        assertNull(m.statusText())
+        assertEquals(1, m.warnings().size)
+
+        val toDisabled = apiModel()
+        toDisabled.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday)
+        toDisabled.applySchedule(ScheduleResult.Disabled(null), apiToday)
+        assertNull(toDisabled.statusText())
     }
 
     @Test

@@ -69,7 +69,7 @@ docs/calendar-mock/api.md, verification.md
 
 1. `MainActivity.onCreate` が `ApiConfig.load(filesDir)` を呼ぶ。ファイルが無ければシナリオモード。API モードではシナリオ選択・リセットのメニューを出さず（ヘッダーの長押しは何もしない）、`PanelModel.perform` もシナリオの操作を拒否する。あれば API モードで、`ScheduleFetcher` を作って `PanelRoot` に渡す。ファイルがあるのに不正なら API モードのまま「接続設定の誤り」を出し、取得しない（黙ってシナリオに戻さない）。設定の変更は `am force-stop` の後に起動し直して反映する。
 2. `ScheduleFetcher` は `resume` で即時に1回取得し、取得を始めるたびに 15 秒後の見張りを自分の Handler に予約する（時間が来たら世代番号を進め、接続を切り、`Failed(TIMEOUT)` を渡す。接続・ヘッダー・本文のどこで止まっても効く）。以後は「前の取得が終わってから」次を予約する。間隔は成功時は応答の `pollSeconds`（無ければ 300 秒）、失敗時は最後に分かった `pollSeconds`（無ければ 30 秒）。取得は同時に1件だけ。`pause` と `onDetachedFromWindow` で世代番号を進めて予約を消し、作業中の要求の結果は捨てる。止めている間は再予約しない。
-3. 取得結果はメインスレッドで `PanelController.onSchedule(result)` に渡す。Controller は、指が触れている間は結果を1件だけ保留し、全ての指が離れたら反映する。反映では `PanelModel.applySchedule(result, today)` を呼び、明滅の予約（`syncTimers`）と時計の札（`PanelHost.updateClockBadges()` を新設）を合わせ、再描画する。無操作の時間は変えない。
+3. 取得結果はメインスレッドで `PanelController.onSchedule(result)` に渡す。Controller は、指が触れている間は結果を反映せず、最後の成功（`Loaded`・`Disabled`）と、その後に届いた直近の失敗を分けて持つ（成功が後から届いたら、それより前の失敗は捨てる）。全ての指が離れたら、成功 → 失敗の順で反映する（成功が後なら失敗は無かったことになる）。反映では `PanelModel.applySchedule(result, today)` を呼び、明滅の予約（`syncTimers`）と時計の札（`PanelHost.updateClockBadges()` を新設）を合わせ、再描画する。無操作の時間は変えない。
 4. API モードでは、Controller が新しい `PanelTimer.DATE` を、ホームでも時計でも毎分予約する。API のタイムゾーン（未取得なら端末のゾーン）での今日を求め、変わっていれば 3 と同じ保留の経路に通す（指が触れている間は保留し、離した後の操作の処理を終えてから、または取り消し後に `refreshDate` と同期をする）。`resume` でもすぐに求める。シナリオモードでは今までどおり（`DATE` を使わない）。
 
 ## インターフェース
@@ -108,7 +108,7 @@ API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見�
 
 `date` だけ epoch 秒にしない理由: 終日の予定は時刻を持たない暦日で、epoch 秒にするとタイムゾーンの解釈がずれる余地が増える。複数日の予定・時刻付きの予定は、サーバーが開始日の単日の予定として渡す。
 
-**返す回の範囲:** 予定日が「今日の 7 日前」から「今日の 60 日後」までの回。7 は hogo-meter の世帯の設定値の想定（今回は Mock の設定値、パネルには配らない）。今回は実施を送らないので、サーバーは過去の回が済んだか分からない。7 日を過ぎた回は返さず、パネルの未確認の警告もそこで消える（PRD の「決まっていないこと」）。
+**返す回の範囲:** 予定日が「今日の 7 日前」から「今日の 60 日後」までの回。過去側の 7 日は hogo-meter の世帯の設定値の想定で、既定は 7 日。今回は Mock の評価設定 `pastDays` で 0〜31 日に変えられ、パネルには配らない。今回は実施を送らないので、サーバーは過去の回が済んだか分からない。この日数を過ぎた回は返さず、パネルの未確認の警告もそこで消える（PRD の「決まっていないこと」）。
 
 状態ごとの意味と、パネルの扱い:
 
@@ -122,11 +122,11 @@ API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見�
 
 「古い」とみなす時間はサーバーが決める（Mock は評価用の切り替えで直接選ぶ）。
 
-エラー: `401 {"error":"unauthorized"}`、`404 {"error":"device not found"}`、`421 {"error":"misdirected request"}`（Mock の 8787 で `Host` が違うとき。パネルでは `HTTP_OTHER`）、`500 {"error":"internal error"}`。Mock は `Host`（421）→ パスの形（404）→ 秘密の値（401）→ `deviceId`（404）の順に確かめる。秘密の値を先に確かめるので、秘密を持たない相手には機器の有無が分からない。パネルが本文を読むのは 200 だけで、200 以外の 2xx は `HTTP_OTHER`、3xx は `REDIRECT`。`Content-Type` が `application/json` でない 2xx のパネルの分類は `NOT_JSON`。
+エラー: `401 {"error":"unauthorized"}`、`404 {"error":"device not found"}`、`421 {"error":"misdirected request"}`（Mock の 8787 で `Host` が違うとき。パネルでは `HTTP_OTHER`）、`500 {"error":"internal error"}`。Mock は `Host`（421）→ パスの形（404）→ 秘密の値（401）→ `deviceId`（404）の順に確かめる。秘密の値を先に確かめるので、秘密を持たない相手には機器の有無が分からない。パネルが本文を読むのは 200 だけで、200 以外の 2xx は `HTTP_OTHER`、3xx は `REDIRECT`。200 で `Content-Type` が `application/json` でなければ `NOT_JSON`。
 
 ### パネルの検証と状態遷移
 
-`MedicationsJson.parse(text, today)` は次を全体の失敗（`Failed(INVALID)`）にする: JSON として読めない、入れ子の深さが 9 以上（トップの `{}` / `[]` を 1 と数え、8 までは受ける。解析の前に数える。JSON の文字列の中の括弧とエスケープは数えない）、64 KiB を超える、同じオブジェクトの中で同じキーが 2 回出る、`enabled` が無い・boolean でない、`enabled:true` なのに `status`・`leadDays`・`occurrences` が無いか型が違う、`leadDays` が 0〜14 の外または整数でない、`timeZone` が文字列でない・地域の ID（`Area/City` の形）と `UTC` のどちらでもない（オフセット形式を含む。`ZoneId.of` に渡す前に形を確かめる）、`occurrences` が配列でない・200 件を超える、`key` が重複する。`timeZone` が無いときは失敗にせず、端末のタイムゾーンで今日を決める。
+`MedicationsJson.parse(text, today)` は次を全体の失敗（`Failed(INVALID)`）にする: JSON として読めない、入れ子の深さが 9 以上（トップの `{}` / `[]` を 1 と数え、8 までは受ける。解析の前に数える。JSON の文字列の中の括弧とエスケープは数えない）、同じオブジェクトの中で同じキーが 2 回出る、`enabled` が無い・boolean でない、`enabled:true` なのに `status`・`leadDays`・`occurrences` が無いか型が違う、`leadDays` が 0〜14 の外または整数でない、`timeZone` が文字列でない・地域の ID（`Area/City` の形）と `UTC` のどちらでもない（オフセット形式を含む。`ZoneId.of` に渡す前に形を確かめる）、`occurrences` が配列でない・200 件を超える、`key` が重複する。64 KiB を超える本文は `INVALID` ではなく `TOO_LARGE` の全体の失敗（読んだバイト数で数える）。`timeZone` が無いときは失敗にせず、端末のタイムゾーンで今日を決める。
 
 判定の順番: (1) 大きさ・JSON・深さ・同じキーの重複、(2) `enabled`（`false` ならここで終わる）、(3) `status`・`leadDays`・`timeZone`・`occurrences`、(4) `key` の重複、(5) 回ごとの除外、(6) 並べ直し。`key` の重複は、回ごとの除外の前に、`key` が文字列である要素どうしで判定する（あとで除かれる回どうしの重複も全体の失敗）。パネルは一覧の並びを確かめず、日付・`key` の順に自分で並べ直す。
 
@@ -152,7 +152,8 @@ sealed interface ScheduleResult {
 | → `Loaded(notConnected)` | 空にする | 応答の値・端末のゾーン | 「カレンダー未接続」 |
 | → `Disabled` | 空にする | そのまま | 薬カード・時計の札・状態を出さない |
 | → `Failed`（前に `Loaded` あり） | 残す | 残す | 「予定を取得できません」 |
-| → `Failed`（未取得・`Disabled` の後） | 空のまま | そのまま | 「予定を取得できません」 |
+| → `Failed`（一度も応答を受け取れていない＝未取得） | 空のまま | そのまま | 「予定を未取得（通信できません）」。以後も失敗が続くあいだ同じ。成功（`Loaded`・`Disabled`）で消える |
+| → `Failed`（`Disabled` の後） | 空のまま | そのまま | 「予定を取得できません」（表示オフの結果は受け取り済みなので「未取得」とは出さない。薬は出ない） |
 | 接続設定の誤り | 空 | 2・端末のゾーン | 「接続設定を確認してください」、取得しない |
 
 - 実施済み（`doneKeys`）は差し替えても残す。新しい一覧に無い key は判定に出ないだけ。評価をやり直すときは `am force-stop` で消える（メモリ内だけ）。
@@ -262,7 +263,7 @@ adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel rm files/api-config.j
 
 ## リスクと対策
 
-- **adb reverse が切れる:** 端末の再接続でポート転送が消える。README に再設定の手順を書く。パネルは「予定を取得できません」を出して前回の予定で動き、転送が戻れば次の取得で回復する（実機で確かめる）。
+- **adb reverse が切れる:** 端末の再接続でポート転送が消える。README に再設定の手順を書く。パネルは「予定を取得できません」（一度も取れていないときは「予定を未取得（通信できません）」）を出して前回の予定で動き、転送が戻れば次の取得で回復する（実機で確かめる）。
 - **取得中に画面が止まる:** 通信は必ず作業用スレッド。メインスレッドでは待たない。Mock の `slow` は `ThreadingHTTPServer` なので画面モックは止まらない。
 - **既存テストの前提（警告日数 2・シナリオ日付）が崩れる:** 判定関数は初期値の引数を 2 にし、シナリオモードの動きを変えない。
 - **PC と端末の時計がずれる:** 基準日は PC の日付、判定は端末の日付。評価の前に両方の日付を確かめる手順を README に書く。

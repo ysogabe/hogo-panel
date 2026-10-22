@@ -19,7 +19,7 @@
     soon: ["そろそろ", "フィラリア予防薬が「そろそろ」"],
     today: ["今日", "フィラリア予防薬が「今日」"],
     overdue: ["未確認", "フィラリア予防薬が「未確認」"],
-    expired: ["期限切れ", "警告なし（8 日前の回は範囲外）"],
+    expired: ["期限切れ", "警告なし（8 日前の回は範囲外。過去の日数 7 のとき。8 以上にすると返り、警告になる）"],
     two: ["2 件", "フロントラインが「今日」、フィラリア予防薬が「そろそろ」"],
     three: ["3 件", "長い薬名が「未確認」、フロントラインが「今日」のカード 2 枚＋「ほか 1 件」"],
     longName: ["長い薬名", "長い薬名が「今日」（末尾を「…」で切る）"],
@@ -273,7 +273,7 @@
     text($("switch-text"), state.enabled ? "オン" : "オフ");
     text($("switch-hint"), state.enabled
       ? "オン: パネルは予定を取得し、警告を出します。"
-      : "オフ: パネルは予定を取得せず、投薬の警告を出しません。");
+      : "オフ: パネルは薬カードと時計の薬名を出しません（取得は続けます）。");
     text($("device-poll"), "パネルは " + state.pollSeconds + " 秒ごとに取得します（パネル側は 10〜3600 秒に収めます）");
   }
 
@@ -295,7 +295,7 @@
     for (const key of Object.keys(controls)) syncControl(key, state[key], force);
 
     const expect = label(PRESETS, state.preset);
-    text($("preset-expect"), "期待するパネルの表示（今日 = 基準日・警告日数 2 のとき）: " + (Array.isArray(expect) ? expect[1] : expect));
+    text($("preset-expect"), "期待するパネルの表示（今日 = 基準日・警告日数 2・過去の日数 7（既定）のとき）: " + (Array.isArray(expect) ? expect[1] : expect));
 
     const fault = $("fault-note");
     if (state.fault !== "none") {

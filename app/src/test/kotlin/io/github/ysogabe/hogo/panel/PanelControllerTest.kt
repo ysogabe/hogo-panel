@@ -646,7 +646,7 @@ class PanelControllerTest {
         controller.onSchedule(ScheduleResult.Failed(FetchError.NETWORK))
         assertEquals("予定を取得中", model.statusText()) // 押している間は変えない
         releaseFinger()
-        assertEquals(PanelModel.STATUS_FETCH_FAILED, model.statusText())
+        assertEquals(PanelModel.STATUS_UNFETCHED_OFFLINE, model.statusText())
         holdFinger()
         controller.onSchedule(loaded(todayOcc))
         releaseFinger()

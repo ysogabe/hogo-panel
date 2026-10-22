@@ -187,6 +187,8 @@ class PanelModel(
         val phase = apiPhase ?: return null
         return when {
             phase == ApiPhase.CONFIG_ERROR -> STATUS_CONFIG_ERROR
+            // 一度も応答を受け取れていない（未取得）ままの失敗は、前に取れた予定が無いと分かる文言にする。
+            lastFetchFailed && phase == ApiPhase.UNFETCHED -> STATUS_UNFETCHED_OFFLINE
             lastFetchFailed -> STATUS_FETCH_FAILED
             phase == ApiPhase.UNFETCHED -> STATUS_FETCHING
             phase == ApiPhase.DISABLED -> null
@@ -463,6 +465,7 @@ class PanelModel(
         const val MAX_CARDS = 2
 
         const val STATUS_FETCHING = "予定を取得中"
+        const val STATUS_UNFETCHED_OFFLINE = "予定を未取得（通信できません）"
         const val STATUS_FETCH_FAILED = "予定を取得できません"
         const val STATUS_STALE = "予定が古い"
         const val STATUS_UPDATE_FAILED = "予定を更新できません"
