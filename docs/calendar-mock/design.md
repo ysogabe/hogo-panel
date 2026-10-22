@@ -122,7 +122,7 @@ API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見�
 
 「古い」とみなす時間はサーバーが決める（Mock は評価用の切り替えで直接選ぶ）。
 
-エラー: `401 {"error":"unauthorized"}`、`404 {"error":"device not found"}`、`421 {"error":"misdirected request"}`（Mock の 8787 で `Host` が違うとき。パネルでは `HTTP_OTHER`）、`500 {"error":"internal error"}`。Mock は `Host`（421）→ パスの形（404）→ 秘密の値（401）→ `deviceId`（404）の順に確かめる。秘密の値を先に確かめるので、秘密を持たない相手には機器の有無が分からない。`Content-Type` が `application/json` でない 2xx のパネルの分類は `NOT_JSON`。
+エラー: `401 {"error":"unauthorized"}`、`404 {"error":"device not found"}`、`421 {"error":"misdirected request"}`（Mock の 8787 で `Host` が違うとき。パネルでは `HTTP_OTHER`）、`500 {"error":"internal error"}`。Mock は `Host`（421）→ パスの形（404）→ 秘密の値（401）→ `deviceId`（404）の順に確かめる。秘密の値を先に確かめるので、秘密を持たない相手には機器の有無が分からない。パネルが本文を読むのは 200 だけで、200 以外の 2xx は `HTTP_OTHER`、3xx は `REDIRECT`。`Content-Type` が `application/json` でない 2xx のパネルの分類は `NOT_JSON`。
 
 ### パネルの検証と状態遷移
 

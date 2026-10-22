@@ -6,7 +6,7 @@
 
 | ID | 内容 | AC | 依存 | 種類 | 状態 | 開始 SHA | コミット | メモ |
 |---|---|---|---|---|---|---|---|---|
-| T1 | API の文書 `api.md` と見本 JSON（`app/src/test/resources/api/medications/*.json`） | AC1 | - | quick | 実装中 | 8fa9a9b | | |
+| T1 | API の文書 `api.md` と見本 JSON（`app/src/test/resources/api/medications/*.json`） | AC1 | - | quick | 完了 | 8fa9a9b | 47de72f..44ded84 | Opus レビュー: AC1 満たす、必須なし。推奨の仕様の空白（key の形、日付・名前・整数・深さ・重複キー・timeZone・判定順・421）を管理側で決めて反映。T3 注意: Android の org.json は重複キーを上書き、テスト用の Maven 版は例外 → 自前で検出。整数はリテラルの形で判定 |
 | T2 | Mock API（`tools/mock-hogo-meter/` の `mock_state.py`・`server.py`・`push-config.sh`・unittest・README） | AC2 | T1 | full | 未着手 | | | |
 | T3 | パネルの判定と読み取り（`ReminderPolicy` の警告日数の引数化、`MedicationsJson`、`ApiConfig`、`PanelModel` の API モードと `applySchedule`、確認の回の保持、カード 2 枚と「ほか N 件」、単体テスト） | AC3, AC4, AC5 | T1 | full | 未着手 | | | |
 | T4 | パネルの通信と配線（`HttpScheduleSource`、`ScheduleFetcher`、`PanelController.onSchedule` と `DATE`、`updateClockBadges`、状態の表示、`MainActivity`、debug のマニフェストと network security config、BUILD.md の release 検査） | AC5, AC6, AC7, AC10 | T3 | full | 未着手 | | | |
