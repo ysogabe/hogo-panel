@@ -487,6 +487,38 @@ class UiTest(ServerTestCase):
             self.assertIsNone(resp.getheader("Access-Control-Allow-Origin"))
 
 
+class RealStaticFilesTest(ServerTestCase):
+    """リポジトリの static/ にある画面モック本体 (UiTest は一時ディレクトリの代用ファイルで確かめる)。"""
+
+    EXPECTED = {"/": "text/html; charset=utf-8", "/static/mock.css": "text/css; charset=utf-8",
+                "/static/mock.js": "text/javascript; charset=utf-8"}
+
+    def test_served_on_8788_with_content_types(self):
+        for path, ctype in self.EXPECTED.items():
+            status, resp, body = fetch(self.uport, "GET", path)
+            self.assertEqual(status, 200, path)
+            self.assertEqual(resp.getheader("Content-Type"), ctype)
+            self.assertGreater(len(body), 100, path)
+
+    def test_not_served_on_8787(self):
+        for path in self.EXPECTED:
+            self.assertEqual(fetch(self.dport, "GET", path)[0], 404, path)
+
+    def test_page_is_self_contained_and_marked_as_mock(self):
+        files = {name: (server.STATIC_DIR / name).read_text(encoding="utf-8")
+                 for name in ("index.html", "mock.css", "mock.js")}
+        self.assertIn("本物ではありません", files["index.html"])
+        self.assertIn("評価用（本番には無い）", files["index.html"])
+        for name, content in files.items():
+            # 外部の CDN・フォント・ライブラリを読まない (CSP は default-src 'self')
+            self.assertNotRegex(content, r"https?://|//cdn|@import", name)
+        # API の値は textContent だけで入れる。インラインのスクリプト・スタイルも使わない (CSP で止まる)
+        self.assertNotIn("innerHTML", files["mock.js"])
+        self.assertNotIn("insertAdjacentHTML", files["mock.js"])
+        self.assertNotIn("outerHTML", files["mock.js"])
+        self.assertNotRegex(files["index.html"], r"<style|style=|\son[a-z]+=|<script(?![^>]*\ssrc=)")
+
+
 class SecretAndLogTest(ServerTestCase):
     def test_secret_is_not_in_state_requests_preview_or_headers(self):
         self.set_state(preset="three")
