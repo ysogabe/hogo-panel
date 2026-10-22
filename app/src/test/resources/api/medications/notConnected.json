@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "status": "notConnected",
+  "leadDays": 2,
+  "pollSeconds": 60,
+  "occurrences": []
+}

@@ -74,7 +74,7 @@ docs/calendar-mock/api.md, verification.md
 
 ## インターフェース
 
-API の文書は `docs/calendar-mock/api.md` に置き、以下を正とする。
+API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見本は [`app/src/test/resources/api/medications/`](../../app/src/test/resources/api/medications/)）、以下を正とする。
 
 ### 機器向け API（案 v0）
 
@@ -244,7 +244,7 @@ adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel rm files/api-config.j
 
 | AC | 確かめ方 |
 |---|---|
-| AC1 | `api.md` と見本 JSON（`ok` / `stale` / `fetchFailed` / `reauthRequired` / `notConnected` / `disabled` / `error-401`）の突き合わせをレビューで確認 |
+| AC1 | [`api.md`](api.md) と見本 JSON（`ok` / `stale` / `fetchFailed` / `reauthRequired` / `notConnected` / `disabled` / `error-401`）の突き合わせをレビューで確認 |
 | AC2 | `python3 -m unittest`（`tools/mock-hogo-meter`）: 見本と同じキー・型。カレンダーを切り替えると key が変わる。基準日を固定して preset ごとの返す回（上の表）と、`pastDays`・範囲の境界。月末・年末・うるう日の基準日。`Content-Length` がバイト長。Host 違いが 421、Origin なし・違いの POST が 403、8787 に `/mock/*` と画面が無い、一時ファイルが 0600 で作られ終了時に消える、型違い・知らないキーが 400、`../` などのパスが 404。状態と要求の一覧に秘密の値が無い。待ち受けが 127.0.0.1 |
 | AC3 | `MedicationsJsonTest`: 見本ごとの読み取り、`leadDays=3` で 3 日前から警告、全体の失敗の各条件（深い入れ子を含む。文字列の中の括弧は数えない）、1件だけおかしな回の除外、知らないキー・知らない `status`・`icon` の扱い |
 | AC3 | `ApiConfigTest`: 正しい設定、欠けたキー、`https://` や他のホスト、パス付き、短い秘密、大きすぎるファイル |
