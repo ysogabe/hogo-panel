@@ -21,7 +21,7 @@ from pathlib import Path
 
 import mock_state as ms
 import server
-from test_mock_state import SAMPLES, check_api_shape, json_depth
+from test_mock_state import GARBAGE_SAMPLE, SAMPLES, check_api_shape, json_depth
 
 HERE = Path(__file__).resolve().parent
 SECRET = "test-secret-" + "x" * 20
@@ -66,7 +66,7 @@ EXTERNAL_RESOURCE_RE = re.compile(r"https?:|@import|[\"'`(=]\s*//\S")
 class ServerTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = server.MockApp(SECRET, clock=lambda: NOW)
+        cls.app = server.MockApp(SECRET, clock=lambda: NOW, garbage_path=GARBAGE_SAMPLE)
         cls.app.slow_seconds = 0.3
         cls.device, cls.ui = server.make_servers(cls.app, 0, 0)
         cls.threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in (cls.device, cls.ui)]
@@ -83,7 +83,8 @@ class ServerTestCase(unittest.TestCase):
             srv.server_close()
 
     def setUp(self):
-        self.app._state = ms.initial_state(TODAY)
+        # 既存の試験は薬の回だけを見るので、ゴミ収集は切っておく (ゴミの試験は GarbageApiTest で入れる)
+        self.app._state = dict(ms.initial_state(TODAY), garbage=False)
         self.app._requests.clear()
 
     # --- ヘルパー ---
@@ -291,10 +292,10 @@ class FaultTest(ServerTestCase):
 
     def test_slow_default_is_twelve_seconds(self):
         self.assertEqual(server.SLOW_SECONDS, 12)
-        self.assertEqual(server.MockApp(SECRET).slow_seconds, 12)
+        self.assertEqual(server.MockApp(SECRET, garbage_path=GARBAGE_SAMPLE).slow_seconds, 12)
 
     def test_slow_wait_ends_when_the_server_stops(self):
-        app = server.MockApp(SECRET)
+        app = server.MockApp(SECRET, garbage_path=GARBAGE_SAMPLE)
         app.stop.set()
         started = time.monotonic()
         app.stop.wait(app.slow_seconds)
@@ -705,6 +706,205 @@ class SecretAndLogTest(ServerTestCase):
         reply = raw_exchange(self.dport, b"GARBAGE-LINE-123\r\n\r\n")
         self.assertNotIn(b"GARBAGE-LINE-123", reply)
         self.assertNotIn(b"<html", reply.lower())
+
+
+class GarbageApiTest(ServerTestCase):
+    """ゴミ収集 (dayOnly の回)。定義は架空の見本 testdata/garbage-sample.json。"""
+
+    def setUp(self):
+        super().setUp()
+        self.set_state(garbage=True, preset="none")
+
+    def device_body(self):
+        status, _, body = self.medications()
+        self.assertEqual(status, 200)
+        parsed = json.loads(body)
+        check_api_shape(self, parsed)
+        return parsed
+
+    def test_device_api_adds_today_occurrences_with_day_only(self):
+        parsed = self.device_body()
+        today = [o for o in parsed["occurrences"] if o["date"] == TODAY.isoformat()]
+        self.assertEqual([o["key"] for o in today], ["occ-gomi-sa-20261022", "occ-gomi-sd-20261022"])
+        for occ in today:
+            self.assertIs(occ["dayOnly"], True)
+            self.assertEqual(occ["icon"], "trash")
+        self.assertLessEqual(len(parsed["occurrences"]), 200)
+
+    def test_added_to_the_medicine_occurrences(self):
+        self.set_state(preset="three")
+        occs = self.device_body()["occurrences"]
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        self.assertTrue(any(o.get("dayOnly") for o in occs))
+
+    def test_preview_and_schedule_include_it(self):
+        preview = self.get_json(self.uport, "/mock/preview")
+        self.assertEqual(preview, self.device_body() | {"fetchedAt": preview["fetchedAt"]})
+        schedule = self.get_json(self.uport, "/mock/schedule")
+        dates = [o["date"] for o in schedule["occurrences"]]
+        self.assertTrue(dates and min(dates) >= (TODAY - timedelta(days=7)).isoformat()
+                        and max(dates) <= (TODAY + timedelta(days=30)).isoformat())
+        self.assertTrue(all(o["dayOnly"] and o["icon"] == "trash" for o in schedule["occurrences"]))
+
+    def test_schedule_ignores_the_device_settings(self):
+        self.set_state(enabled=False, pastDays=0)
+        schedule = self.get_json(self.uport, "/mock/schedule")
+        # 機器が表示オフでも pastDays が 0 でも、世帯の予定は −7 日から返る
+        self.assertIn((TODAY - timedelta(days=7)).isoformat(), [o["date"] for o in schedule["occurrences"]])
+        self.assertEqual(self.device_body(), {"enabled": False, "pollSeconds": 15})
+
+    def test_off_not_connected_and_disabled_return_none(self):
+        self.set_state(garbage=False)
+        self.assertEqual(self.device_body()["occurrences"], [])
+        self.assertEqual(self.get_json(self.uport, "/mock/schedule")["occurrences"], [])
+        self.assertEqual(self.get_json(self.uport, "/mock/preview")["occurrences"], [])
+        self.set_state(garbage=True, status="notConnected")
+        self.assertEqual(self.device_body()["occurrences"], [])
+        self.assertEqual(self.get_json(self.uport, "/mock/schedule")["occurrences"], [])
+        self.set_state(status="ok", enabled=False)
+        self.assertEqual(self.device_body(), {"enabled": False, "pollSeconds": 15})
+        self.assertEqual(self.get_json(self.uport, "/mock/preview"), {"enabled": False, "pollSeconds": 15})
+
+    def test_state_document_has_garbage_and_availability(self):
+        doc = self.get_json(self.uport, "/mock/state")
+        self.assertIs(doc["state"]["garbage"], True)
+        self.assertIs(doc["garbageAvailable"], True)
+
+    def test_garbage_can_be_switched_over_http(self):
+        status, _, body = self.post_state({"garbage": False})
+        self.assertEqual(status, 200)
+        self.assertIs(json.loads(body)["state"]["garbage"], False)
+        self.assertEqual(self.device_body()["occurrences"], [])
+        for bad in ("true", 1, None):
+            status, _, _ = self.post_state({"garbage": bad})
+            self.assertEqual(status, 400)
+        self.assertIs(self.app.snapshot()["garbage"], False)
+
+    def test_unencodable_series_is_dropped_and_the_responses_stay_200(self):
+        text = ('{"series": [{"id": "ok1", "name": "架空ごみ", "dates": ["2026-10-22"]},'
+                ' {"id": "lone", "name": "\\ud800", "dates": ["2026-10-22"]}]}')
+        original = self.app.garbage
+        self.addCleanup(setattr, self.app, "garbage", original)
+        self.app.garbage = ms.parse_garbage(text)
+        self.set_state(preset="three")
+        occs = self.device_body()["occurrences"]
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        self.assertEqual([o["key"] for o in occs if o.get("dayOnly")], ["occ-gomi-ok1-20261022"])
+        self.assertEqual(len(self.get_json(self.uport, "/mock/preview")["occurrences"]), 4)
+        self.assertEqual([o["key"] for o in self.get_json(self.uport, "/mock/schedule")["occurrences"]
+                          if o.get("dayOnly")], ["occ-gomi-ok1-20261022"])
+
+    def test_cap_keeps_medicines_and_todays_garbage(self):
+        every_day = [(TODAY + timedelta(days=i)).isoformat() for i in range(-60, 60)]
+        series = [{"id": "s%d" % i, "name": "x", "dates": every_day} for i in range(ms.GARBAGE_MAX_SERIES)]
+        original = self.app.garbage
+        self.addCleanup(setattr, self.app, "garbage", original)
+        self.app.garbage = ms.parse_garbage(json.dumps({"series": series}))
+        self.set_state(preset="three", pastDays=31)
+        occs = self.device_body()["occurrences"]
+        self.assertEqual(len(occs), 200)
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        self.assertEqual(sum(1 for o in occs if o["date"] == TODAY.isoformat() and o.get("dayOnly")), 20)
+
+    def test_garbage_does_not_change_the_secret_checks_or_the_log(self):
+        self.assertEqual(self.medications(secret="wrong")[0], 401)
+        self.assertEqual(self.medications(device_id="zzz")[0], 404)
+        self.assertNotIn(SECRET, json.dumps(self.get_json(self.uport, "/mock/requests")))
+
+
+class GarbageFileTest(unittest.TestCase):
+    """ファイルが無い・壊れている・一部が誤りのとき。一時ディレクトリの架空のファイルだけを使う。"""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+
+    def app_for(self, content=None, raw=None):
+        path = self.dir / "garbage.json"
+        if raw is not None:
+            path.write_bytes(raw)
+        elif content is not None:
+            path.write_text(content, encoding="utf-8")
+        return server.MockApp(SECRET, clock=lambda: NOW, garbage_path=path)
+
+    def preview(self, app):
+        app.update({"preset": "none"})
+        return app.preview()
+
+    def test_default_path_is_fixed_next_to_server_py(self):
+        self.assertEqual(server.GARBAGE_PATH, HERE / "local" / "garbage.json")
+        self.assertEqual(server.MockApp(SECRET, garbage_path=GARBAGE_SAMPLE).garbage_path, GARBAGE_SAMPLE)
+        source = (HERE / "server.py").read_text(encoding="utf-8")
+        self.assertNotIn("environ", source)
+        self.assertNotIn("getenv", source)
+        self.assertEqual(list(inspect.signature(server.main).parameters), ["device_port", "ui_port"])
+
+    def test_missing_file_gives_no_garbage_and_keeps_running(self):
+        app = self.app_for()
+        self.assertIsNone(app.garbage)
+        self.assertEqual(self.preview(app)["occurrences"], [])
+        self.assertEqual(app.schedule()["occurrences"], [])
+        self.assertIs(app.state_document()["garbageAvailable"], False)
+        self.assertIs(app.state_document()["state"]["garbage"], True)
+
+    def test_broken_files_give_no_garbage(self):
+        cases = {
+            "empty": "", "not json": "{{{", "array": "[]", "series is not a list": '{"series": 5}',
+            "nan": '{"series": NaN}', "duplicate key": '{"series": [], "series": []}',
+        }
+        for name, content in cases.items():
+            with self.subTest(name):
+                app = self.app_for(content)
+                self.assertIsNone(app.garbage)
+                self.assertEqual(self.preview(app)["occurrences"], [])
+        with self.subTest("invalid utf-8"):
+            self.assertIsNone(self.app_for(raw=b"\xff\xfe{\"series\": []}").garbage)
+
+    def test_too_large_file_is_not_read(self):
+        padding = " " * (ms.GARBAGE_FILE_MAX_BYTES + 1)
+        self.assertIsNone(self.app_for('{"series": []}' + padding).garbage)
+        self.assertEqual(self.app_for('{"series": []}').garbage, [])
+
+    def test_a_directory_is_not_a_file(self):
+        app = server.MockApp(SECRET, clock=lambda: NOW, garbage_path=self.dir)
+        self.assertIsNone(app.garbage)
+
+    def test_bad_series_and_dates_are_dropped_and_startup_continues(self):
+        content = json.dumps({"series": [
+            {"id": "ok1", "name": "架空ごみ", "dates": ["2026-10-22", "2026-02-30", "bad", 5]},
+            {"id": "BAD ID", "name": "x", "dates": ["2026-10-22"]},
+            {"id": "ok2", "name": "x", "dates": "2026-10-22"},
+        ]}, ensure_ascii=False)
+        app = self.app_for(content)
+        self.assertEqual([s[0] for s in app.garbage], ["ok1"])
+        keys = [o["key"] for o in self.preview(app)["occurrences"]]
+        self.assertEqual(keys, ["occ-gomi-ok1-20261022"])
+
+    def test_banner_shows_the_path_and_that_it_could_not_be_read_but_never_the_content(self):
+        marker = "MARKER-" + "z" * 12
+        for content in (None, "{{{ " + marker, json.dumps({"series": 5, "x": marker})):
+            with self.subTest(content=content):
+                app = self.app_for(content)
+                line = server.garbage_banner(app)
+                self.assertIn(str(app.garbage_path), line)
+                self.assertIn("読めなかった", line)
+                self.assertNotIn(marker, line)
+
+    def test_banner_for_a_good_file_shows_only_the_series_count(self):
+        marker = "架空ごみ-MARKER"
+        app = self.app_for(json.dumps({"series": [{"id": "a", "name": marker, "dates": ["2026-10-22"]}]},
+                                      ensure_ascii=False))
+        line = server.garbage_banner(app)
+        self.assertIn(str(app.garbage_path), line)
+        self.assertIn("1 種類", line)
+        self.assertNotIn(marker, line)
+        self.assertNotIn("2026", line.replace(str(app.garbage_path), ""))
+
+    def test_loading_does_not_write_anything(self):
+        before = sorted(p.name for p in self.dir.iterdir())
+        self.app_for()
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), before)
 
 
 class BindingTest(ServerTestCase):

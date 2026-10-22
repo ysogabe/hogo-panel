@@ -164,4 +164,55 @@ class ReminderPolicyTest {
         assertEquals(listOf("a-oct"), ReminderPolicy.warnings(listOf(oct, nov), emptySet(), today, 2L).map { it.occurrence.key })
         assertEquals(listOf("a-nov"), ReminderPolicy.warnings(listOf(oct, nov), emptySet(), today, 3L).map { it.occurrence.key })
     }
+
+    // ---- dayOnly（当日だけ警告する回） ----
+
+    private fun dayOnlyOcc(key: String, series: String, due: LocalDate) =
+        Occurrence(key, series, series, MedIcon.TRASH, due, dayOnly = true)
+
+    @Test
+    fun dayOnlyPhaseIsTodayOnlyOnTheDay() {
+        val due = d(2026, 10, 20)
+        fun p(today: LocalDate, done: Boolean = false, lead: Long = 2L) = ReminderPolicy.phase(due, today, done, lead, dayOnly = true)
+        assertEquals(Phase.NORMAL, p(d(2026, 10, 17)))
+        assertEquals(Phase.NORMAL, p(d(2026, 10, 18)))
+        assertEquals(Phase.NORMAL, p(d(2026, 10, 19)))
+        assertEquals(Phase.TODAY, p(d(2026, 10, 20)))
+        assertEquals(Phase.NORMAL, p(d(2026, 10, 21)))
+        assertEquals(Phase.NORMAL, p(d(2026, 12, 1)))
+        assertEquals(Phase.DONE, p(d(2026, 10, 20), done = true))
+        for (lead in listOf(0L, 2L, 14L)) assertEquals(Phase.NORMAL, p(d(2026, 10, 19), lead = lead))
+    }
+
+    @Test
+    fun dayOnlyOccurrenceWarnsOnlyOnTheDayWhateverLeadDaysIs() {
+        val o = dayOnlyOcc("g-1020", "g", d(2026, 10, 20))
+        for (lead in listOf(0L, 2L, 14L)) {
+            assertTrue(ReminderPolicy.warnings(listOf(o), emptySet(), d(2026, 10, 19), lead).isEmpty())
+            assertEquals(Phase.TODAY, ReminderPolicy.warnings(listOf(o), emptySet(), d(2026, 10, 20), lead).single().phase)
+            assertTrue(ReminderPolicy.warnings(listOf(o), emptySet(), d(2026, 10, 21), lead).isEmpty())
+        }
+    }
+
+    @Test
+    fun dayOnlyDoneOccurrenceIsNotShownAndYesterdayIsNotCarriedOver() {
+        val yesterday = dayOnlyOcc("g-1019", "g", d(2026, 10, 19))
+        val today = dayOnlyOcc("g-1020", "g", d(2026, 10, 20))
+        assertTrue(ReminderPolicy.warnings(listOf(today), setOf("g-1020"), d(2026, 10, 20)).isEmpty())
+        // 昨日の回が未確認のままでも、今日の回が無い日は何も出さない
+        assertTrue(ReminderPolicy.warnings(listOf(yesterday), emptySet(), d(2026, 10, 20)).isEmpty())
+        // 今日の回があれば、昨日の未確認は繰り上げずに今日の回が出る
+        assertEquals(listOf("g-1020"), ReminderPolicy.warnings(listOf(yesterday, today), emptySet(), d(2026, 10, 20)).map { it.occurrence.key })
+        // 今日の回が済んでいれば、昨日の回も出ない
+        assertTrue(ReminderPolicy.warnings(listOf(yesterday, today), setOf("g-1020"), d(2026, 10, 20)).isEmpty())
+    }
+
+    @Test
+    fun dayOnlySeriesDoesNotChangeTheWarningOfMedicines() {
+        val med = occ("m-1022", "m", d(2026, 10, 22))
+        // 明日のごみは予告しない（薬なら leadDays 内でそろそろになる日）
+        val trash = dayOnlyOcc("g-1021", "g", d(2026, 10, 21))
+        val w = ReminderPolicy.warnings(listOf(med, trash), emptySet(), d(2026, 10, 20))
+        assertEquals(listOf("m-1022" to Phase.SOON), w.map { it.occurrence.key to it.phase })
+    }
 }

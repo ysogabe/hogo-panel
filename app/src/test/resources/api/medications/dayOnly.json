@@ -1,0 +1,56 @@
+{
+  "enabled": true,
+  "status": "ok",
+  "leadDays": 2,
+  "timeZone": "Asia/Tokyo",
+  "fetchedAt": 1792629000,
+  "pollSeconds": 15,
+  "occurrences": [
+    {
+      "key": "occ-gomi-sample1-20261021",
+      "seriesId": "ser-gomi-sample1",
+      "name": "架空のごみ（見本1）",
+      "date": "2026-10-21",
+      "icon": "trash",
+      "dayOnly": true
+    },
+    {
+      "key": "occ-cal1-L-20261022",
+      "seriesId": "ser-cal1-L",
+      "name": "フロントライン",
+      "date": "2026-10-22",
+      "icon": "drop"
+    },
+    {
+      "key": "occ-gomi-sample1-20261022",
+      "seriesId": "ser-gomi-sample1",
+      "name": "架空のごみ（見本1）",
+      "date": "2026-10-22",
+      "icon": "trash",
+      "dayOnly": true
+    },
+    {
+      "key": "occ-gomi-sample2-20261022",
+      "seriesId": "ser-gomi-sample2",
+      "name": "架空のごみ（見本2）",
+      "date": "2026-10-22",
+      "icon": "trash",
+      "dayOnly": true
+    },
+    {
+      "key": "occ-gomi-sample1-20261023",
+      "seriesId": "ser-gomi-sample1",
+      "name": "架空のごみ（見本1）",
+      "date": "2026-10-23",
+      "icon": "trash",
+      "dayOnly": true
+    },
+    {
+      "key": "occ-cal1-F-20261024",
+      "seriesId": "ser-cal1-F",
+      "name": "フィラリア予防薬",
+      "date": "2026-10-24",
+      "icon": "pill"
+    }
+  ]
+}

@@ -31,8 +31,8 @@
       <div id="status-note" class="note-box" hidden></div>
 
       <article class="card">
-        <h2>直近の投薬予定</h2>
-        <p class="hint">今日の 7 日前から 30 日後まで・最大 5 件。</p>
+        <h2>直近の予定</h2>
+        <p class="hint">今日の 7 日前から 30 日後まで。薬は最大 5 件、ゴミ収集（当日だけ表示）は今日以降の最大 5 件。</p>
         <ul id="upcoming" class="upcoming"></ul>
         <p id="upcoming-note" class="empty" hidden></p>
         <p id="goto-calendar-wrap" hidden><button type="button" class="btn" id="goto-calendar">カレンダー連携の設定を開く</button></p>
@@ -79,6 +79,18 @@
           <legend class="visually-hidden">投薬の予定を読むカレンダー</legend>
         </fieldset>
         <p id="calendar-note" class="hint"></p>
+      </article>
+
+      <article class="card">
+        <h2>当日だけ表示するカレンダー</h2>
+        <ul class="day-only-calendars">
+          <li class="radio is-checked">
+            <span class="occ-icon"><span class="icon-trash" aria-hidden="true"></span></span>
+            <span>ゴミ収集（当日だけ表示）</span>
+            <small id="garbage-state">—</small>
+          </li>
+        </ul>
+        <p class="hint">薬のカレンダーと一緒にパネルへ配ります。予定の当日だけ警告し、前日までの予告や翌日以降の持ち越しはしません。見せかけの設定で、評価用の切り替え欄の「ゴミ収集カレンダー」で入り切りします。</p>
       </article>
 
       <article class="card">

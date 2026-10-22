@@ -91,7 +91,7 @@ class PanelView(
             )
             val iconBox = Box(box.left + 24f, box.centerY - 32f, 64f, 64f)
             roundBox(c, iconBox, 20f, s.iconFill, null)
-            val glyph = if (w.occurrence.icon == MedIcon.PILL) Icon.PILL else Icon.DROP
+            val glyph = medGlyph(w.occurrence.icon)
             drawIcon(c, glyph, Box(iconBox.centerX - 16.5f, iconBox.centerY - 16.5f, 33f, 33f), s.icon, 2.5f)
             val textX = box.left + 108f
             val maxW = box.width - 108f - 36f - 20f - 24f
@@ -154,7 +154,7 @@ class PanelView(
         val d = PanelLayout.dialog(icon != null)
         roundBox(c, d.panel, 24f, DIALOG_FILL, DIALOG_BORDER)
         d.symbolBox?.let { box ->
-            drawIcon(c, if (icon == MedIcon.PILL) Icon.PILL else Icon.DROP, box, DIALOG_SYMBOL, 2.5f)
+            drawIcon(c, medGlyph(icon), box, DIALOG_SYMBOL, 2.5f)
         }
         drawText(
             c, model.confirmTitle().orEmpty(), d.panel.centerX, d.titleCenterY, 38f, DIALOG_TITLE,
@@ -276,7 +276,13 @@ class PanelView(
         c.drawText(label, x, cy - (m.ascent + m.descent) / 2f, text)
     }
 
-    private enum class Icon { CAT, CLOCK, PILL, DROP }
+    private enum class Icon { CAT, CLOCK, PILL, DROP, TRASH }
+
+    private fun medGlyph(icon: MedIcon?): Icon = when (icon) {
+        MedIcon.DROP -> Icon.DROP
+        MedIcon.TRASH -> Icon.TRASH
+        else -> Icon.PILL
+    }
 
     /** 承認済み HTML のアイコンを、[box] へ収まる線画として描く。 */
     private fun drawIcon(c: Canvas, icon: Icon, box: Box, color: Int, strokeWidth: Float) {
@@ -284,7 +290,7 @@ class PanelView(
         stroke.strokeWidth = strokeWidth
         stroke.strokeCap = Paint.Cap.ROUND
         stroke.strokeJoin = Paint.Join.ROUND
-        val grid = if (icon == Icon.PILL || icon == Icon.DROP) 48f else 32f
+        val grid = if (icon == Icon.PILL || icon == Icon.DROP || icon == Icon.TRASH) 48f else 32f
         c.save()
         c.translate(box.left, box.top)
         c.scale(box.width / grid, box.height / grid)
@@ -331,6 +337,24 @@ class PanelView(
                 c.drawPath(path, stroke)
                 rect.set(17f, 22f, 31f, 36f)
                 c.drawArc(rect, 90f, 90f, false, stroke)
+            }
+            Icon.TRASH -> {
+                // ふた（持ち手つき）と、先すぼまりの本体、縦の線 2 本
+                c.drawLine(8f, 12f, 40f, 12f, stroke)
+                path.reset()
+                path.moveTo(18f, 12f)
+                path.lineTo(18f, 7f)
+                path.lineTo(30f, 7f)
+                path.lineTo(30f, 12f)
+                c.drawPath(path, stroke)
+                path.reset()
+                path.moveTo(12f, 12f)
+                path.lineTo(14f, 41f)
+                path.lineTo(34f, 41f)
+                path.lineTo(36f, 12f)
+                c.drawPath(path, stroke)
+                c.drawLine(20f, 20f, 20f, 33f, stroke)
+                c.drawLine(28f, 20f, 28f, 33f, stroke)
             }
         }
         c.restore()

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import mock_state as ms
 
+GARBAGE_SAMPLE = Path(__file__).resolve().parent / "testdata" / "garbage-sample.json"  # 架空の見本
+
 SAMPLES = Path(__file__).resolve().parents[2] / "app" / "src" / "test" / "resources" / "api" / "medications"
 NOW = 1792629000  # 見本の fetchedAt と同じ固定の値
 
@@ -100,7 +102,10 @@ def check_api_shape(test, body):
     keys = [o["key"] for o in occs]
     test.assertEqual(len(keys), len(set(keys)))
     for occ in occs:
-        test.assertEqual(set(occ), {"key", "seriesId", "name", "date", "icon"})
+        base_keys = {"key", "seriesId", "name", "date", "icon"}
+        test.assertIn(set(occ), (base_keys, base_keys | {"dayOnly"}))
+        if "dayOnly" in occ:
+            test.assertIs(occ["dayOnly"], True)
         for field in ("key", "seriesId"):
             test.assertRegex(occ[field], r"[A-Za-z0-9._:-]{1,128}")
         test.assertTrue(1 <= len(occ["name"]) <= 40)
@@ -108,7 +113,7 @@ def check_api_shape(test, body):
         test.assertFalse(any(unicodedata.category(c) in ("Cc", "Cf") for c in occ["name"]))
         test.assertRegex(occ["date"], r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
         date.fromisoformat(occ["date"])
-        test.assertIn(occ["icon"], ("pill", "drop"))
+        test.assertIn(occ["icon"], ("pill", "drop", "trash"))
     test.assertLessEqual(len(ms.encode_json(body)), 64 * 1024)
     test.assertLessEqual(json_depth(body), 8)
 
@@ -132,7 +137,7 @@ class SampleShapeTest(unittest.TestCase):
                     self.assertIs(type(built_occ[key]), type(occ[key]), key)
 
     def test_samples_themselves_pass_the_shape_rules(self):
-        for name in ("ok", "stale", "fetchFailed", "reauthRequired", "notConnected", "disabled"):
+        for name in ("ok", "stale", "fetchFailed", "reauthRequired", "notConnected", "disabled", "dayOnly"):
             with self.subTest(name):
                 check_api_shape(self, self.load(name))
 
@@ -474,6 +479,289 @@ class NameAndFaultTest(unittest.TestCase):
         today = date(2026, 10, 22)
         raw = ms.encode_json(ms.build_medications(state_for(today, preset="three"), today, NOW)).decode()
         self.assertIsNone(re.search(r"secret", raw, re.I))
+
+
+def sample_garbage():
+    return ms.parse_garbage(GARBAGE_SAMPLE.read_text(encoding="utf-8"))
+
+
+def garbage_doc(series):
+    return json.dumps({"calendarName": "x", "dayOnly": True, "series": series}, ensure_ascii=False)
+
+
+class GarbageParseTest(unittest.TestCase):
+    def test_sample_is_read(self):
+        series = sample_garbage()
+        self.assertEqual([sid for sid, _, _ in series], ["sa", "sb", "sc", "sd"])
+        for _, name, dates in series:
+            self.assertTrue(1 <= len(name) <= ms.NAME_MAX_CODEPOINTS)
+            self.assertEqual(dates, sorted(set(dates)))
+            self.assertTrue(all(isinstance(d, date) for d in dates))
+
+    def test_unreadable_documents_raise(self):
+        for text in ("", "not json", "[]", "null", '{"series":{}}', '{"calendarName":"x"}', '{"series":NaN}',
+                     '{"series":[],"series":[]}', "\ufeff{}"):
+            with self.subTest(text=text):
+                with self.assertRaises(ms.GarbageError):
+                    ms.parse_garbage(text)
+
+    def test_empty_series_list_is_readable(self):
+        self.assertEqual(ms.parse_garbage('{"series":[]}'), [])
+
+    def test_bad_series_are_dropped_and_the_rest_kept(self):
+        good = {"id": "ok1", "name": "架空ごみ", "dates": ["2026-10-22"]}
+        bad = [
+            "text", 5, None, [],
+            {"id": "UPPER", "name": "x", "dates": []},
+            {"id": "a" * 17, "name": "x", "dates": []},
+            {"id": "", "name": "x", "dates": []},
+            {"id": "a-b", "name": "x", "dates": []},
+            {"id": "全角", "name": "x", "dates": []},
+            {"id": 5, "name": "x", "dates": []},
+            {"name": "x", "dates": []},
+            {"id": "n1", "name": "", "dates": []},
+            {"id": "n2", "name": "   \u3000 ", "dates": []},
+            {"id": "n3", "name": "\u200b\u0007", "dates": []},
+            {"id": "n4", "name": 5, "dates": []},
+            {"id": "d1", "name": "x", "dates": "2026-10-22"},
+            {"id": "d2", "name": "x"},
+            dict(good),  # 同じ id の 2 つめ (1 つめは下で先に入れる)
+        ]
+        result = ms.parse_garbage(garbage_doc([good] + bad))
+        self.assertEqual([sid for sid, _, _ in result], ["ok1"])
+        self.assertEqual(result[0][2], [date(2026, 10, 22)])
+
+    def test_series_with_unencodable_names_are_dropped_and_the_rest_kept(self):
+        # JSON の \ud800 は孤立サロゲートになり、UTF-8 にできない。ほかの不正な系列と同じく、その系列だけ捨てる
+        text = ('{"series": [{"id": "ok1", "name": "架空ごみ", "dates": ["2026-10-22"]},'
+                ' {"id": "lone", "name": "\\ud800", "dates": ["2026-10-22"]},'
+                ' {"id": "mix", "name": "架空\\udc00ごみ", "dates": ["2026-10-22"]},'
+                ' {"id": "ok2", "name": "架空ごみ2", "dates": ["2026-10-23"]}]}')
+        result = ms.parse_garbage(text)
+        self.assertEqual([sid for sid, _, _ in result], ["ok1", "ok2"])
+        for _, name, _ in result:
+            name.encode("utf-8")
+
+    def test_accepts_id_edges(self):
+        series = [{"id": "a" * 16, "name": "x", "dates": []}, {"id": "0", "name": "x", "dates": []}]
+        self.assertEqual([sid for sid, _, _ in ms.parse_garbage(garbage_doc(series))], ["a" * 16, "0"])
+
+    def test_bad_dates_are_dropped_and_the_rest_kept(self):
+        dates = ["2026-10-22", "2026-02-30", "2026-1-1", "2026-10-22 ", "２０２６-１０-２２", "20261022", "2026-13-01",
+                 "0000-01-01", 20261022, None, True, [], {}, "2026-10-22", "2026-10-21", "2028-02-29"]
+        result = ms.parse_garbage(garbage_doc([{"id": "a", "name": "x", "dates": dates}]))
+        self.assertEqual(result[0][2], [date(2026, 10, 21), date(2026, 10, 22), date(2028, 2, 29)])
+
+    def test_names_follow_the_sender_rules(self):
+        series = [
+            {"id": "a", "name": "  \u200b架空\u0007ごみ \u3000", "dates": []},
+            {"id": "b", "name": "あ" * 41, "dates": []},
+        ]
+        result = dict((sid, name) for sid, name, _ in ms.parse_garbage(garbage_doc(series)))
+        self.assertEqual(result["a"], "架空ごみ")
+        self.assertEqual(result["b"], "あ" * 40)
+
+    def test_series_and_date_counts_are_capped(self):
+        series = [{"id": "s%d" % i, "name": "x", "dates": []} for i in range(ms.GARBAGE_MAX_SERIES + 5)]
+        self.assertEqual(len(ms.parse_garbage(garbage_doc(series))), ms.GARBAGE_MAX_SERIES)
+        many = [(date(2026, 1, 1) + timedelta(days=i)).isoformat() for i in range(ms.GARBAGE_MAX_DATES + 50)]
+        result = ms.parse_garbage(garbage_doc([{"id": "a", "name": "x", "dates": many}]))
+        self.assertEqual(len(result[0][2]), ms.GARBAGE_MAX_DATES)
+
+
+class GarbageOccurrenceTest(unittest.TestCase):
+    TODAY = date(2026, 10, 22)  # 木曜
+
+    def setUp(self):
+        self.series = sample_garbage()
+
+    def body(self, garbage=True, **overrides):
+        state = state_for(self.TODAY, preset="none", garbage=garbage, **overrides)
+        return ms.build_medications(state, self.TODAY, NOW, self.series)
+
+    def test_key_series_id_name_icon_and_day_only(self):
+        occs = self.body()["occurrences"]
+        today = [o for o in occs if o["date"] == "2026-10-22"]
+        self.assertEqual([o["key"] for o in today], ["occ-gomi-sa-20261022", "occ-gomi-sd-20261022"])
+        first = today[0]
+        self.assertEqual(first["seriesId"], "ser-gomi-sa")
+        self.assertEqual(first["name"], "架空ごみA（火・木）")
+        self.assertEqual(first["icon"], "trash")
+        self.assertIs(first["dayOnly"], True)
+        self.assertEqual(list(first), ["key", "seriesId", "name", "date", "icon", "dayOnly"])
+        for occ in occs:
+            self.assertRegex(occ["key"], r"occ-gomi-[a-z0-9]{1,16}-[0-9]{8}")
+            self.assertIs(occ["dayOnly"], True)
+
+    def test_matches_the_day_only_sample_shape(self):
+        sample = self.load_sample()
+        sample_trash = next(o for o in sample["occurrences"] if o["icon"] == "trash")
+        built = self.body()["occurrences"][0]
+        self.assertEqual(list(built), list(sample_trash))
+        for key in sample_trash:
+            self.assertIs(type(built[key]), type(sample_trash[key]), key)
+        # 見本の薬の回は、薬の見本 (ok.json) と同じ形で dayOnly を持たない
+        self.assertNotIn("dayOnly", next(o for o in sample["occurrences"] if o["icon"] == "drop"))
+
+    @staticmethod
+    def load_sample():
+        return json.loads((SAMPLES / "dayOnly.json").read_text(encoding="utf-8"))
+
+    def test_device_range_is_today_minus_past_days_to_plus_60(self):
+        for past in (0, 7, 31):
+            with self.subTest(past=past):
+                dates = {o["date"] for o in self.body(pastDays=past)["occurrences"]}
+                low, high = self.TODAY - timedelta(days=past), self.TODAY + timedelta(days=60)
+                everything = {d.isoformat() for _, _, ds in self.series for d in ds}
+                self.assertEqual(dates, {d for d in everything if low.isoformat() <= d <= high.isoformat()})
+        self.assertEqual(min(o["date"] for o in self.body(pastDays=7)["occurrences"]), "2026-10-15")
+        self.assertEqual(max(o["date"] for o in self.body()["occurrences"]), "2026-12-19")  # 12-21 が +60 日
+
+    def test_range_edges_are_inclusive(self):
+        series = [("e", "架空ごみE", [self.TODAY - timedelta(days=8), self.TODAY - timedelta(days=7),
+                                     self.TODAY + timedelta(days=60), self.TODAY + timedelta(days=61)])]
+        state = state_for(self.TODAY, preset="none")
+        dates = [o["date"] for o in ms.build_medications(state, self.TODAY, NOW, series)["occurrences"]]
+        self.assertEqual(dates, ["2026-10-15", "2026-12-21"])
+
+    def test_dates_are_absolute_not_relative_to_the_base_date(self):
+        reference = [o["key"] for o in self.body()["occurrences"]]
+        for base in (date(2026, 1, 1), date(2026, 10, 22), date(2027, 6, 30)):
+            with self.subTest(base=base):
+                state = state_for(self.TODAY, preset="none", baseDate=base.isoformat())
+                built = ms.build_medications(state, self.TODAY, NOW, self.series)
+                self.assertEqual([o["key"] for o in built["occurrences"]], reference)
+
+    def test_not_affected_by_the_medicine_calendar(self):
+        one = self.body(calendarId="mock-cal-1")["occurrences"]
+        two = self.body(calendarId="mock-cal-2")["occurrences"]
+        self.assertEqual(one, two)
+
+    def test_added_to_medicines_in_date_and_key_order(self):
+        state = state_for(self.TODAY, preset="three")
+        occs = ms.build_medications(state, self.TODAY, NOW, self.series)["occurrences"]
+        self.assertEqual(occs, sorted(occs, key=lambda o: (o["date"], o["key"])))
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        self.assertGreater(sum(1 for o in occs if o.get("dayOnly")), 10)
+        check_api_shape(self, ms.build_medications(state, self.TODAY, NOW, self.series))
+
+    def test_unencodable_series_does_not_break_the_response(self):
+        text = ('{"series": [{"id": "ok1", "name": "架空ごみ", "dates": ["2026-10-22"]},'
+                ' {"id": "lone", "name": "\\ud800", "dates": ["2026-10-22"]}]}')
+        state = state_for(self.TODAY, preset="three")
+        for body in (ms.build_medications(state, self.TODAY, NOW, ms.parse_garbage(text)),
+                     ms.build_schedule(state, self.TODAY, NOW, ms.parse_garbage(text))):
+            ms.encode_json(body)
+            keys = [o["key"] for o in body["occurrences"]]
+            self.assertIn("occ-gomi-ok1-20261022", keys)
+            self.assertNotIn("occ-gomi-lone-20261022", keys)
+        medicines = ms.build_medications(state, self.TODAY, NOW, ms.parse_garbage(text))["occurrences"]
+        self.assertEqual(sum(1 for o in medicines if "dayOnly" not in o), 3)
+
+    def test_garbage_off_not_connected_and_disabled_return_none(self):
+        self.assertEqual(self.body(garbage=False)["occurrences"], [])
+        self.assertEqual(self.body(status="notConnected")["occurrences"], [])
+        disabled = self.body(enabled=False)
+        self.assertEqual(set(disabled), {"enabled", "pollSeconds"})
+        self.assertNotIn("occurrences", disabled)
+
+    def test_other_statuses_keep_the_garbage(self):
+        for status in ("ok", "stale", "fetchFailed", "reauthRequired"):
+            with self.subTest(status):
+                self.assertTrue(self.body(status=status)["occurrences"])
+
+    def test_no_garbage_given_means_none(self):
+        state = state_for(self.TODAY, preset="none")
+        self.assertEqual(ms.build_medications(state, self.TODAY, NOW)["occurrences"], [])
+
+    def test_schedule_range_is_minus_7_to_plus_30_and_follows_the_same_rules(self):
+        state = state_for(self.TODAY, preset="none")
+        body = ms.build_schedule(state, self.TODAY, NOW, self.series)
+        dates = [o["date"] for o in body["occurrences"]]
+        self.assertEqual(min(dates), "2026-10-15")
+        self.assertEqual(max(dates), "2026-11-21")
+        self.assertTrue(all(o["dayOnly"] for o in body["occurrences"]))
+        # 機器の enabled・pastDays に左右されない
+        off = state_for(self.TODAY, preset="none", enabled=False, pastDays=0)
+        self.assertEqual(ms.build_schedule(off, self.TODAY, NOW, self.series)["occurrences"], body["occurrences"])
+        for patch in ({"garbage": False}, {"status": "notConnected"}):
+            with self.subTest(patch=patch):
+                self.assertEqual(ms.build_schedule(state_for(self.TODAY, preset="none", **patch), self.TODAY, NOW,
+                                                   self.series)["occurrences"], [])
+
+    def worst_case(self, **overrides):
+        every_day = [(date(2026, 1, 1) + timedelta(days=i)).isoformat() for i in range(800)]
+        series = [{"id": "s%d" % i, "name": "あ" * 40, "dates": every_day} for i in range(ms.GARBAGE_MAX_SERIES)]
+        parsed = ms.parse_garbage(garbage_doc(series))
+        state = state_for(self.TODAY, preset="three", pastDays=31, **overrides)
+        return ms.build_medications(state, self.TODAY, NOW, parsed)
+
+    def test_worst_case_stays_within_200_occurrences_and_64_kib(self):
+        body = self.worst_case()
+        self.assertEqual(len(body["occurrences"]), ms.MAX_OCCURRENCES)
+        self.assertLessEqual(len(ms.encode_json(body)), 64 * 1024)
+        check_api_shape(self, body)
+
+    def test_cap_keeps_every_medicine_and_todays_garbage_before_past_garbage(self):
+        occs = self.worst_case()["occurrences"]
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        self.assertEqual(occs, sorted(occs, key=lambda o: (o["date"], o["key"])))
+        trash = [o for o in occs if o.get("dayOnly")]
+        self.assertEqual(len(trash), ms.MAX_OCCURRENCES - 3)
+        today = [o for o in trash if o["date"] == self.TODAY.isoformat()]
+        self.assertEqual(len(today), ms.GARBAGE_MAX_SERIES)
+        # 今日以降が 197 件を満たすので、過去のゴミは 1 件も入らない。今日以降は日付の近い順
+        self.assertEqual(min(o["date"] for o in trash), self.TODAY.isoformat())
+        self.assertEqual(max(o["date"] for o in trash), (self.TODAY + timedelta(days=9)).isoformat())
+
+    def test_cap_fills_the_rest_with_past_garbage_nearest_first(self):
+        past = [(self.TODAY - timedelta(days=i)).isoformat() for i in range(1, 16)]
+        series = [{"id": "s%d" % i, "name": "x", "dates": past} for i in range(ms.GARBAGE_MAX_SERIES)]
+        state = state_for(self.TODAY, preset="three", pastDays=31)
+        occs = ms.build_medications(state, self.TODAY, NOW, ms.parse_garbage(garbage_doc(series)))["occurrences"]
+        self.assertEqual(len(occs), ms.MAX_OCCURRENCES)
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        trash = [o for o in occs if o.get("dayOnly")]
+        self.assertEqual(max(o["date"] for o in trash), (self.TODAY - timedelta(days=1)).isoformat())
+        self.assertEqual(min(o["date"] for o in trash), (self.TODAY - timedelta(days=10)).isoformat())
+        self.assertEqual(occs, sorted(occs, key=lambda o: (o["date"], o["key"])))
+
+    def test_cap_with_upcoming_not_enough_adds_upcoming_first_then_past(self):
+        dates = [(self.TODAY + timedelta(days=i)).isoformat() for i in range(-12, 3)]  # 過去 12 日・今日・先 2 日
+        series = [{"id": "s%d" % i, "name": "x", "dates": dates} for i in range(ms.GARBAGE_MAX_SERIES)]
+        state = state_for(self.TODAY, preset="none", pastDays=31)
+        occs = ms.build_medications(state, self.TODAY, NOW, ms.parse_garbage(garbage_doc(series)))["occurrences"]
+        self.assertEqual(len(occs), ms.MAX_OCCURRENCES)
+        by_date = {}
+        for occ in occs:
+            by_date[occ["date"]] = by_date.get(occ["date"], 0) + 1
+        for offset in range(0, 3):  # 今日以降 3 日 60 件はすべて入る
+            self.assertEqual(by_date[(self.TODAY + timedelta(days=offset)).isoformat()], 20)
+        self.assertEqual(by_date[(self.TODAY - timedelta(days=1)).isoformat()], 20)
+        self.assertNotIn((self.TODAY - timedelta(days=8)).isoformat(), by_date)  # 140 件目まで: 7 日分 (-1 .. -7)
+        self.assertEqual(by_date[(self.TODAY - timedelta(days=7)).isoformat()], 20)
+
+    def test_typical_amount_is_about_thirty(self):
+        count = len(ms.build_schedule(state_for(self.TODAY, preset="none"), self.TODAY, NOW, self.series)["occurrences"])
+        self.assertTrue(10 <= count <= 60, count)
+
+
+class GarbageStateTest(unittest.TestCase):
+    def test_default_is_on_and_it_is_a_public_key(self):
+        state = ms.initial_state(date(2026, 10, 22))
+        self.assertIs(state["garbage"], True)
+        self.assertEqual(ms.public_state(state)["garbage"], True)
+        self.assertEqual(ms.STATE_KEYS[-1], "garbage")
+
+    def test_update_accepts_only_booleans(self):
+        state = ms.initial_state(date(2026, 10, 22))
+        self.assertIs(ms.apply_update(state, {"garbage": False}, lambda z: date(2026, 10, 22))["garbage"], False)
+        for bad in (0, 1, "true", None, [], {}):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ms.StateError):
+                    ms.apply_update(state, {"garbage": bad}, lambda z: date(2026, 10, 22))
+        self.assertIs(state["garbage"], True)
+
 
 
 if __name__ == "__main__":

@@ -780,4 +780,75 @@ class PanelModelTest {
         assertEquals(listOf("フィラリア", "フロントライン"), model(Scenario.LATE).clockBadges())
         assertEquals(listOf(0, 0), listOf(model(Scenario.TODAY).hiddenWarningCount(), model(Scenario.SOON).hiddenWarningCount()))
     }
+
+    // ---- dayOnly（ゴミ収集など、当日だけ出す回） ----
+
+    private fun trash(series: String, date: LocalDate) =
+        Occurrence("g-$series-${date.toString().replace("-", "")}", "g-$series", "ごみ$series", MedIcon.TRASH, date, dayOnly = true)
+
+    @Test
+    fun dayOnlyShowsOnlyOnTheDayAndNotBeforeOrAfter() {
+        val m = apiModel()
+        val list = listOf(trash("a", apiToday.minusDays(1)), trash("a", apiToday.plusDays(1)))
+        m.applySchedule(loadedOf(list), apiToday)
+        assertTrue(m.warnings().isEmpty())
+        m.applySchedule(loadedOf(list + trash("a", apiToday)), apiToday)
+        assertEquals(listOf(Phase.TODAY), m.warnings().map { it.phase })
+        assertEquals(MedIcon.TRASH, m.warnings().single().occurrence.icon)
+        // 翌日になれば前日の回は持ち越さず、その日の回だけが出る
+        m.applySchedule(loadedOf(list + trash("a", apiToday)), apiToday.plusDays(1))
+        assertEquals(listOf(apiToday.plusDays(1)), m.warnings().map { it.occurrence.scheduled })
+        m.applySchedule(loadedOf(list + trash("a", apiToday)), apiToday.plusDays(2))
+        assertTrue(m.warnings().isEmpty())
+    }
+
+    @Test
+    fun dayOnlyCanBeConfirmedAndKeepsItsIconInTheDialog() {
+        val m = apiModel()
+        val g = trash("a", apiToday)
+        m.applySchedule(loadedOf(listOf(g)), apiToday)
+        m.openMed(g.key, t0)
+        assertEquals(MedIcon.TRASH, m.confirmIcon())
+        m.confirm(t0 + 500)
+        assertTrue(m.warnings().isEmpty())
+        assertTrue(m.isDone(g.key))
+    }
+
+    @Test
+    fun medicinesComeBeforeDayOnlyInTheSamePhaseAndDate() {
+        val m = apiModel()
+        // ごみを先に並べても、同じ今日の段階では薬が先
+        val list = listOf(trash("a", apiToday), trash("b", apiToday), todayOcc)
+        m.applySchedule(loadedOf(list), apiToday)
+        assertEquals(listOf("l-1022", "g-a-20261022", "g-b-20261022"), m.warnings().map { it.occurrence.key })
+        assertEquals(listOf("l-1022", "g-a-20261022"), m.shownWarnings().map { it.occurrence.key })
+        assertEquals("ほか 1 件", m.moreText())
+        assertEquals(listOf("フロントライン", "ごみa", "ほか 1 件"), m.clockBadges())
+    }
+
+    @Test
+    fun phaseAndDateStillOutrankTheMedicineFirstRule() {
+        val m = apiModel()
+        // 未確認の薬 > 今日のごみ。そろそろの薬は今日のごみより後
+        val list = listOf(soon, trash("a", apiToday), late, trash("b", apiToday))
+        m.applySchedule(loadedOf(list), apiToday)
+        assertEquals(listOf("m-1021", "g-a-20261022", "g-b-20261022", "f-1024"), m.warnings().map { it.occurrence.key })
+        assertEquals(2, m.shownWarnings().size)
+        assertEquals("ほか 2 件", m.moreText())
+    }
+
+    @Test
+    fun fourDayOnlyOccurrencesOnOneDayFitTwoCardsAndMore() {
+        val m = apiModel()
+        val list = listOf("a", "b", "c", "d").map { trash(it, apiToday) }
+        m.applySchedule(loadedOf(list), apiToday)
+        assertEquals(4, m.warnings().size)
+        assertEquals(listOf("g-a-20261022", "g-b-20261022"), m.shownWarnings().map { it.occurrence.key })
+        assertEquals("ほか 2 件", m.moreText())
+        // 済ませると次の回が繰り上がる
+        m.openMed("g-a-20261022", t0)
+        m.confirm(t0 + 500)
+        assertEquals(listOf("g-b-20261022", "g-c-20261022"), m.shownWarnings().map { it.occurrence.key })
+        assertEquals("ほか 1 件", m.moreText())
+    }
 }

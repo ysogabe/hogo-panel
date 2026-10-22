@@ -53,10 +53,10 @@ adb -s <アドレス>:5555 shell am start -n io.github.ysogabe.hogo.panel/.MainA
 ブラウザで `http://127.0.0.1:8788/` を開く。hogo-meter のダッシュボードに寄せた画面モック（本物ではない）が出る。
 
 - **タブ（1 ページで切り替え。`#top` / `#calendar` / `#device` で直接開ける）**
-  - トップ: 「直近の投薬予定」（世帯の予定 `/mock/schedule` から。今日の −7〜+30 日、最大 5 件。実施は送らないので、パネルで実施済みにしても残る）と、機器のカード（「投薬表示: オン / オフ」。オフは赤い枠）。未接続のときは「カレンダー未接続」と設定への導線。
-  - カレンダー連携: 接続状態（正常・古い・未接続・再接続が必要・取得失敗）、「Google と接続」「切断」（見せかけ。Mock の `status` が変わるだけ）、架空のカレンダー（「ねこの投薬」= `mock-cal-1`、「家族」= `mock-cal-2`）の選択、警告を始める日数（表示のみ）、最後に取れた時刻。
+  - トップ: 「直近の予定」（世帯の予定 `/mock/schedule` から。今日の −7〜+30 日。薬は最大 5 件、ゴミ収集は今日以降の最大 5 件で、ゴミの回はゴミ箱のアイコンと「ゴミ・当日だけ」のラベルが付く。実施は送らないので、パネルで実施済みにしても残る）と、機器のカード（「投薬表示: オン / オフ」。オフは赤い枠）。未接続のときは「カレンダー未接続」と設定への導線。
+  - カレンダー連携: 接続状態（正常・古い・未接続・再接続が必要・取得失敗）、「Google と接続」「切断」（見せかけ。Mock の `status` が変わるだけ）、架空のカレンダー（「ねこの投薬」= `mock-cal-1`、「家族」= `mock-cal-2`）の選択、使うカレンダーとして「ゴミ収集（当日だけ表示）」（表示のみ。使用中・オフ・`local/garbage.json` が無い、のどれか）、警告を始める日数（表示のみ）、最後に取れた時刻。
   - デバイス詳細: 「投薬の予定を表示する」のスイッチ（Mock の `enabled`）。
-- **評価用（本番には無い）の切り替え欄（右側。幅が狭いときは下）**: 予定の並び（preset 9 種）・接続状態・表示のオン・オフ・警告を始める日数・過去の日数・取得間隔・通信の失敗（fault）・基準日・タイムゾーン。基準日・今日・サーバー時刻も出る。
+- **評価用（本番には無い）の切り替え欄（右側。幅が狭いときは下）**: 予定の並び（preset 9 種）・接続状態・表示のオン・オフ・ゴミ収集カレンダーのオン・オフ（`local/garbage.json` が無いときは無効）・警告を始める日数・過去の日数・取得間隔・通信の失敗（fault）・基準日・タイムゾーン。基準日・今日・サーバー時刻も出る。
 - **パネルからの最近の要求**（時刻・メソッド・パス・ステータス・fault）を 2 秒ごとに読み直して出す。
 
 画面の変更は `POST /mock/state` で Mock の状態を変え、パネルの次の取得（`pollSeconds`、既定 15 秒）に反映される。表示は `/mock/state`・`/mock/schedule`・`/mock/requests` から作り、予定の計算も範囲の絞り込みもブラウザでは持たない（最大 5 件に切るだけ）。ダッシュボードの予定とカレンダー連携の「最後に取れた時刻」は世帯の予定から作るので、機器の表示のオン・オフや過去の日数に左右されない。表示が変わらないときの注意:
@@ -76,7 +76,7 @@ adb -s <アドレス>:5555 shell am start -n io.github.ysogabe.hogo.panel/.MainA
 | `GET /mock/preview` | いまパネルが 200 で受ける本文（fault を除く）。画面モックは使わない（パネルの受け取る内容を見るため） | |
 | `GET /mock/schedule` | 世帯の予定（ダッシュボード用）: `status`・`calendarId`・`timeZone`・`fetchedAt`・`occurrences`。機器の `enabled`・`pastDays`・`fault` に関係せず、範囲は今日の −7〜+30 日（両端を含む）で固定。未接続は `occurrences: []`（`fetchedAt` なし） | |
 
-評価状態のキー: `preset`（`normal` / `soon` / `today` / `overdue` / `expired` / `two` / `three` / `longName` / `none`）、`baseDate`（`YYYY-MM-DD`）、`status`（`ok` / `stale` / `fetchFailed` / `reauthRequired` / `notConnected`）、`calendarId`（`mock-cal-1` / `mock-cal-2`）、`enabled`、`leadDays`（0〜14）、`pastDays`（0〜31）、`fault`（`none` / `unauthorized` / `serverError` / `slow` / `malformed` / `deepNesting`）、`pollSeconds`（1〜86400）、`timeZone`（`Asia/Tokyo` のような地域 ID か `UTC`）。
+評価状態のキー: `preset`（`normal` / `soon` / `today` / `overdue` / `expired` / `two` / `three` / `longName` / `none`）、`baseDate`（`YYYY-MM-DD`）、`status`（`ok` / `stale` / `fetchFailed` / `reauthRequired` / `notConnected`）、`calendarId`（`mock-cal-1` / `mock-cal-2`）、`enabled`、`leadDays`（0〜14）、`pastDays`（0〜31）、`fault`（`none` / `unauthorized` / `serverError` / `slow` / `malformed` / `deepNesting`）、`pollSeconds`（1〜86400）、`timeZone`（`Asia/Tokyo` のような地域 ID か `UTC`）、`garbage`（boolean、既定 true。ゴミ収集の回を加えるか）。`GET /mock/state` の最上位には、ゴミ収集の定義を読めたかを示す `garbageAvailable` も付く。
 
 - `preset` を選んだときだけ `baseDate` をその時点の今日にする。同じ更新に `baseDate` があればそちらを使う。
 - 型違い（`bool` を整数として受けない、小数、文字列の数字）・知らないキー・範囲外・NaN は 400。1つでも外れると何も変えない。
@@ -98,6 +98,33 @@ adb -s <アドレス>:5555 shell am start -n io.github.ysogabe.hogo.panel/.MainA
 失敗の結果は、前に成功の結果（予定または表示オフ）を受けていれば「予定を取得できません」、一度も受けていなければ「予定を未取得（通信できません）」として出る。
 
 「パネルからの最近の要求」（`GET /mock/requests`）のステータス 200 は、Mock が 200 を返したという意味で、パネルが採用したという意味ではない。壊れた JSON（`malformed`）や深い入れ子（`deepNesting`）も 200 で返すので、パネルが `INVALID` にしても要求の一覧は 200 のまま。
+
+## ゴミ収集カレンダー（`local/garbage.json`）
+
+「当日だけ出す予定」（API の `dayOnly`）の評価用に、ゴミ収集の回を薬の回に加えて返せる。収集日の実データは**公開リポジトリに入れない**ので、管理側が `tools/mock-hogo-meter/local/garbage.json` に置く（`local/` は `.gitignore` で Git の管理外。`git add` に含めない。コミット・文書・テスト・ログにも中身・地名・日付の並びを書かない）。
+
+形（架空の例）:
+
+```json
+{
+  "calendarName": "ゴミ収集",
+  "dayOnly": true,
+  "series": [
+    {"id": "sample1", "name": "架空ごみ1（見本）", "dates": ["2030-05-06", "2030-05-13", "2030-05-20"]},
+    {"id": "sample2", "name": "架空ごみ2（見本）", "dates": ["2030-05-09", "2030-05-23"]}
+  ]
+}
+```
+
+- `series[].id`: `[a-z0-9]{1,16}`、重複なし。回の `key` は `occ-gomi-<id>-<YYYYMMDD>`、`seriesId` は `ser-gomi-<id>`。
+- `series[].name`: 回の `name`。前後の空白と制御文字を除き、40 文字までに切る。空になる種類は捨てる。
+- `series[].dates`: `YYYY-MM-DD` の実在する日付。基準日（preset）に関係なく、書いた日付のまま使う。
+- 返す回は `icon: "trash"`・`dayOnly: true`。範囲は薬と同じ（機器向けは今日 −`pastDays`〜+60 日、`/mock/schedule` は −7〜+30 日）。薬のカレンダーの選択には関係しない。接続状態が `notConnected` なら返さず、`enabled:false` の応答は薬と同じく回を持たない。画面モックの切り替え欄の「ゴミ収集カレンダー」（`garbage`）で入り切りする。
+- 外れた種類（`id` の誤り・重複・名前が空か UTF-8 にできない（孤立サロゲートなど）・`dates` が配列でない）と外れた日付は捨てて起動を続ける。種類は 20、1 種類の日付は 800 まで、ファイルは 256 KiB まで。
+- 返す回が 200 件を超えるときは、薬の回をすべて先に入れ、残りの枠に今日以降のゴミの回を日付の近い順、それでも余れば過去のゴミの回を今日に近い順に入れる（最後に日付順に並べ直す）。dayOnly の回はパネルでは当日しか使わないので、過去のゴミを後回しにする。
+- ファイルが無い・壊れている（JSON として読めない・大きすぎる・`series` が配列でない）ときは、ゴミの回を出さずに起動を続け、起動時にパスと「読めなかった」ことだけを表示する（中身は出さない）。画面モックの切り替え欄は無効になり「local/garbage.json が無い」と出る。
+- ファイルは起動時に 1 回だけ読む。置いた・直したら `server.py` を起動し直す。パスは `server.py` の場所からの固定で、引数・環境変数では変えられない。
+- 単体テストは架空の見本 `testdata/garbage-sample.json` を使う。実際のプロセスを起動する起動・終了の試験（`ProcessLifecycleTest`）だけは、`local/garbage.json` があればそれを読むが、表示するのは種類の数だけで、結果の判定には使わない。
 
 ## 後片付け
 
@@ -128,7 +155,7 @@ cd tools/mock-hogo-meter
 python3 -m unittest -v
 ```
 
-テストは空いているポートで起動する（本番の起動は 8787/8788 固定）。`app/src/test/resources/api/medications/` の見本 JSON と同じキー・型になることも確かめる。
+テストは空いているポートで起動する（本番の起動は 8787/8788 固定）。`app/src/test/resources/api/medications/` の見本 JSON と同じキー・型になることも確かめる。ゴミ収集は架空の見本 `testdata/garbage-sample.json` で確かめる（範囲、`key` の形、`dayOnly`・`icon`、未接続・表示オフ・`garbage:false` で出ないこと、ファイルが無い・壊れている・誤り（UTF-8 にできない名前を含む）のあるとき、`/mock/schedule`、件数と大きさの上限、上限で薬と今日以降を優先すること）。
 
 ## 公開してよい記録だけを残す
 

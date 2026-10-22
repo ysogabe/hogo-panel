@@ -3,7 +3,8 @@
 "use strict";
 (function () {
   const POLL_MS = 2000;
-  const UPCOMING_MAX = 5;
+  const UPCOMING_MAX = 5; // 薬 (dayOnly でない予定) の最大件数
+  const UPCOMING_DAY_ONLY_MAX = 5; // ゴミ収集など当日だけ出す予定 (今日以降) の最大件数
 
   // 表示用の名前 (Mock の値 -> 画面の文字)。知らない値はそのまま出す。
   const CALENDAR_NAMES = { "mock-cal-1": "ねこの投薬", "mock-cal-2": "家族" };
@@ -182,18 +183,27 @@
     const note = $("upcoming-note");
     const statusNote = $("status-note");
     // 範囲 (今日の −7〜+30 日) と並びはサーバーが決める。ここでは件数だけ切る。
-    const items = Array.isArray(schedule.occurrences) ? schedule.occurrences.slice(0, UPCOMING_MAX) : [];
+    // 当日だけ出す予定 (ゴミ収集) は過ぎたものを出さず、薬の件数とは別に数える (薬が押し出されないように)。
+    const all = Array.isArray(schedule.occurrences) ? schedule.occurrences : [];
+    const today = dayNumber(doc.today);
+    const meds = all.filter((occ) => occ.dayOnly !== true).slice(0, UPCOMING_MAX);
+    const dayOnly = all.filter((occ) => occ.dayOnly === true && dayNumber(occ.date) >= today).slice(0, UPCOMING_DAY_ONLY_MAX);
+    const items = meds.concat(dayOnly).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
     const rows = items.map((occ) => {
       const diff = dayNumber(occ.date) - dayNumber(doc.today);
       const li = make("li", diff < 0 ? "occ-past" : "");
       const icon = make("span", "occ-icon");
-      const shape = make("span", occ.icon === "drop" ? "icon-drop" : "icon-pill");
-      shape.title = occ.icon === "drop" ? "滴下薬" : "錠剤";
+      const kind = occ.icon === "trash" ? "trash" : occ.icon === "drop" ? "drop" : "pill";
+      const shape = make("span", "icon-" + kind);
+      shape.title = kind === "trash" ? "ゴミ" : kind === "drop" ? "滴下薬" : "錠剤";
       icon.appendChild(shape);
       const when = make("div", "occ-date", dateLabel(occ.date));
       when.appendChild(make("small", "", diff === 0 ? "今日" : diff > 0 ? diff + " 日後" : (-diff) + " 日前"));
       li.append(icon, when, make("div", "occ-name", occ.name));
+      if (occ.dayOnly === true) {
+        li.appendChild(make("span", "badge day-badge", kind === "trash" ? "ゴミ・当日だけ" : "当日だけ"));
+      }
       if (diff < 0) {
         const badge = make("span", "badge tone-terracotta", "過ぎています");
         li.appendChild(badge);
@@ -208,7 +218,7 @@
       message = "カレンダー未接続です。";
       showLink = true;
     } else if (items.length === 0) {
-      message = "直近の投薬予定はありません。";
+      message = "直近の予定はありません。";
     }
     text(note, message);
     setHidden(note, !message);
@@ -264,6 +274,9 @@
       ? "選んだカレンダーの予定を読みます（Mock の calendarId が変わり、予定の key も変わります）。"
       : "接続するとカレンダーを選べます。");
     text($("lead-days"), String(state.leadDays));
+    text($("garbage-state"), !doc.garbageAvailable
+      ? "local/garbage.json が無い（使えません）"
+      : state.garbage ? "使用中" : "オフ（評価用の切り替え欄）");
   }
 
   function renderDevice() {
@@ -293,6 +306,12 @@
     }
 
     for (const key of Object.keys(controls)) syncControl(key, state[key], force);
+    if (controls.garbage) {
+      controls.garbage.disabled = !doc.garbageAvailable;
+      text($("garbage-note"), doc.garbageAvailable
+        ? "薬のカレンダーと一緒に、ゴミ収集の予定（当日だけ警告）を配ります。"
+        : "local/garbage.json が無い（または読めなかった）ので使えません。README を見て置き、server.py を起動し直してください。");
+    }
 
     const expect = label(PRESETS, state.preset);
     text($("preset-expect"), "期待するパネルの表示（今日 = 基準日・警告日数 2・過去の日数 7（既定）のとき）: " + (Array.isArray(expect) ? expect[1] : expect));
@@ -387,6 +406,12 @@
     enabled.type = "checkbox";
     enabled.addEventListener("change", () => post({ enabled: enabled.checked }));
     addField(fields, "enabled", "表示のオン・オフ", enabled);
+
+    const garbage = document.createElement("input");
+    garbage.type = "checkbox";
+    garbage.addEventListener("change", () => post({ garbage: garbage.checked }));
+    addField(fields, "garbage", "ゴミ収集カレンダー", garbage);
+    fields.appendChild(make("p", "hint", "")).id = "garbage-note";
 
     addField(fields, "leadDays", "警告を始める日数", numberFor("leadDays", 0, 14), "日（0〜14）");
     addField(fields, "pastDays", "過去の日数", numberFor("pastDays", 0, 31), "日（0〜31）");
