@@ -167,7 +167,7 @@ sealed interface ScheduleResult {
 - URL は `<baseUrl>/api/agent/<deviceId>/medications`。`deviceId` は URL エンコードする。
 - 接続 5 秒、読み取り 1 回 10 秒。全体 15 秒は `ScheduleFetcher` の見張りで守る（読み取りの間隔が短い遅い応答でも止まらない）。
 - `instanceFollowRedirects = false`。3xx は `REDIRECT`。200 の場合に `Content-Type` の種類が（大文字・小文字を区別せず、`; charset=` などを除いて）`application/json` でなければ `NOT_JSON`。
-- 読んだバイト数を数えて 64 KiB で打ち切る（`Content-Length` を信じない）。2xx 以外の本文は読まない。
+- 読んだバイト数を数えて 64 KiB で打ち切る（`Content-Length` を信じない）。200 以外の本文は読まない。
 - `fetch()` は `Throwable` まで捕まえて `Failed` にする。`Failed` には決まった種類だけを入れ、例外のメッセージ・URL・ヘッダーをログに出さない。
 
 ### 接続設定（`run-as` で書く）
