@@ -6,24 +6,41 @@ import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.widget.FrameLayout
+import java.time.LocalDate
 import java.util.TimeZone
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * ホーム（[PanelView]）と既存の低輝度時計（[FlipClockView]）を重ね、タッチとタイマーを [PanelController] へ中継する。
  * 子 View には一切タッチを渡さない。時計の最初のタッチは、全ての指が離れるまで消費してホームへ戻るだけ。
+ * [apiConfig] が [ApiConfig.Loaded.Absent] 以外なら API モード（投薬予定を取得する。誤りなら取得せず状態だけ出す）。
  */
 @SuppressLint("ViewConstructor") // コードからだけ生成する（XML では使わない）
 class PanelRoot(
     context: Context,
+    apiConfig: ApiConfig.Loaded,
     /** 時計中のウィンドウ輝度。null は指定の解除（端末の明るさ設定に戻す）。 */
     private val onBrightness: (level: Float?) -> Unit,
 ) : FrameLayout(context), PanelHost {
     private val handler = Handler(Looper.getMainLooper())
-    private val model = PanelModel(SystemClock.elapsedRealtime())
+    private val model = PanelModel(SystemClock.elapsedRealtime()).also { m ->
+        when (apiConfig) {
+            ApiConfig.Loaded.Absent -> Unit
+            is ApiConfig.Loaded.Valid -> m.enterApiMode(LocalDate.now())
+            is ApiConfig.Loaded.Invalid -> {
+                // どの規則に外れたかだけを出す（値は出さない）。
+                Log.w(TAG, "api config invalid: ${apiConfig.rule.name}")
+                m.enterApiMode(LocalDate.now(), configError = true)
+            }
+        }
+    }
     private val controller = PanelController(model, this, { SystemClock.elapsedRealtime() }, ::localNow)
     private val home = PanelView(context, model, controller)
     private val clock = FlipClockView(context)
@@ -40,6 +57,19 @@ class PanelRoot(
     )
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
+    /** API モードで設定が正しいときだけ。通信は作業用スレッドで、結果はメインスレッドで [PanelController.onSchedule] へ。 */
+    private val fetcher: ScheduleFetcher? = (apiConfig as? ApiConfig.Loaded.Valid)?.let { valid ->
+        ScheduleFetcher(
+            source = HttpScheduleSource(valid.config),
+            poster = HandlerPoster(Handler(Looper.getMainLooper())),
+            // 作業用スレッドは 1 本だけ（取得を直列に保つ。[ScheduleFetcher] も同時に 2 件を渡さない）。使わない間は終わる。
+            executor = ThreadPoolExecutor(
+                0, 1, 30L, TimeUnit.SECONDS, LinkedBlockingQueue(),
+            ) { task -> Thread(task, "hogo-fetch").apply { isDaemon = true } },
+            onResult = ::onFetched,
+        )
+    }
+
     init {
         setBackgroundColor(Color.BLACK)
         isMotionEventSplittingEnabled = false
@@ -48,12 +78,26 @@ class PanelRoot(
         clock.visibility = GONE
     }
 
-    fun resume() = controller.resume()
+    fun resume() {
+        controller.resume()
+        fetcher?.resume()
+    }
 
     /** 描画・タイマー・コールバックを全て止める。 */
     fun pause() {
+        fetcher?.pause()
         controller.pause()
         stopEverything()
+    }
+
+    private fun onFetched(result: ScheduleResult) {
+        // 結果の種類と除いた件数だけを出す（URL・ヘッダー・設定の値は出さない）。
+        when (result) {
+            is ScheduleResult.Loaded -> if (result.excludedCount > 0) Log.i(TAG, "excluded ${result.excludedCount} occurrences")
+            is ScheduleResult.Failed -> Log.w(TAG, "fetch failed: ${result.error.name}")
+            is ScheduleResult.Disabled -> Unit
+        }
+        controller.onSchedule(result)
     }
 
     /** Android の戻る。確認・メニューを閉じた、または時計から戻ったら true。 */
@@ -66,6 +110,7 @@ class PanelRoot(
     }
 
     override fun onDetachedFromWindow() {
+        fetcher?.pause()
         stopEverything()
         super.onDetachedFromWindow()
     }
@@ -91,6 +136,10 @@ class PanelRoot(
         handler.removeCallbacks(timers.getValue(timer))
     }
 
+    override fun updateClockBadges() {
+        clock.badges = model.clockBadges()
+    }
+
     override fun onClockChanged(clockOn: Boolean) {
         if (clockOn) {
             clock.badges = model.clockBadges()
@@ -103,6 +152,20 @@ class PanelRoot(
             clock.stop()
             clock.visibility = GONE
             home.visibility = VISIBLE
+        }
+    }
+
+    private class HandlerPoster(private val handler: Handler) : MainPoster {
+        override fun post(task: Runnable) {
+            handler.post(task)
+        }
+
+        override fun postDelayed(task: Runnable, delayMs: Long) {
+            handler.postDelayed(task, delayMs)
+        }
+
+        override fun removeCallbacks(task: Runnable) {
+            handler.removeCallbacks(task)
         }
     }
 
@@ -137,5 +200,9 @@ class PanelRoot(
             else -> return super.dispatchKeyEvent(event)
         }
         return controller.onKey(key) || super.dispatchKeyEvent(event)
+    }
+
+    private companion object {
+        const val TAG = "HogoPanel"
     }
 }

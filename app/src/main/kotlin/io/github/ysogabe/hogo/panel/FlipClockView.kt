@@ -170,7 +170,11 @@ class FlipClockView(context: Context) : View(context) {
         }
     }
 
-    private fun badgeWidths(): List<Float> = badges.map { badgeText.measureText(it) + BADGE_PAD_X * 2 }
+    /** 札の文字。幅に収まらない薬名は末尾を「…」で切る。 */
+    private fun badgeLabel(name: String): String =
+        TextEllipsis.fit(name, BADGE_MAX_TEXT_WIDTH) { badgeText.measureText(it) }
+
+    private fun badgeWidths(): List<Float> = badges.map { badgeText.measureText(badgeLabel(it)) + BADGE_PAD_X * 2 }
 
     /** [centerX] を中心に、[top] から札を並べる。 */
     private fun drawBadges(canvas: Canvas, centerX: Float, top: Float, widths: List<Float>, shade: Float) {
@@ -185,7 +189,7 @@ class FlipClockView(context: Context) : View(context) {
             badgeRect.set(x, top, x + widths[i], top + ClockMath.BADGE_HEIGHT)
             canvas.drawRoundRect(badgeRect, BADGE_CORNER, BADGE_CORNER, badgeFill)
             canvas.drawRoundRect(badgeRect, BADGE_CORNER, BADGE_CORNER, badgeStroke)
-            canvas.drawText(name, badgeRect.centerX(), baseline, badgeText)
+            canvas.drawText(badgeLabel(name), badgeRect.centerX(), baseline, badgeText)
             x += widths[i] + BADGE_SPACING
         }
     }
@@ -271,6 +275,9 @@ class FlipClockView(context: Context) : View(context) {
         const val BADGE_TEXT = 0xFFD9C17E.toInt()
         const val BADGE_TEXT_SIZE = 23f
         const val BADGE_PAD_X = 18f
+
+        /** 札 1 枚の文字の最大幅。札 2 枚と「ほか N 件」を並べても 960 に収まる。 */
+        const val BADGE_MAX_TEXT_WIDTH = 270f
         const val BADGE_SPACING = 18f
         const val BADGE_STROKE = 1f
         const val BADGE_CORNER = 11f

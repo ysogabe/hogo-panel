@@ -117,4 +117,51 @@ class ReminderPolicyTest {
         assertTrue(ReminderPolicy.warnings(o, emptySet(), d(2026, 10, 17)).isEmpty())
         assertTrue(ReminderPolicy.warnings(o, setOf("a"), d(2026, 10, 20)).isEmpty())
     }
+
+    // ---- 警告日数の引数 ----
+
+    @Test
+    fun leadDaysDefaultsToTwoAndKeepsTheOldBehaviour() {
+        val due = d(2026, 10, 20)
+        assertEquals(d(2026, 10, 18), ReminderPolicy.warnStart(due))
+        assertEquals(ReminderPolicy.warnStart(due), ReminderPolicy.warnStart(due, 2L))
+        assertEquals(Phase.NORMAL, ReminderPolicy.phase(due, d(2026, 10, 17), false, 2L))
+        assertEquals(Phase.SOON, ReminderPolicy.phase(due, d(2026, 10, 18), false, 2L))
+    }
+
+    @Test
+    fun leadDaysThreeStartsTheWarningThreeDaysBefore() {
+        val due = d(2026, 10, 20)
+        assertEquals(d(2026, 10, 17), ReminderPolicy.warnStart(due, 3L))
+        assertEquals(Phase.NORMAL, ReminderPolicy.phase(due, d(2026, 10, 16), false, 3L))
+        assertEquals(Phase.SOON, ReminderPolicy.phase(due, d(2026, 10, 17), false, 3L))
+        val o = Occurrence("a", "s", "薬", MedIcon.PILL, due)
+        assertTrue(ReminderPolicy.warnings(listOf(o), emptySet(), d(2026, 10, 16), 3L).isEmpty())
+        assertEquals(listOf(Phase.SOON), ReminderPolicy.warnings(listOf(o), emptySet(), d(2026, 10, 17), 3L).map { it.phase })
+        assertTrue(ReminderPolicy.warnings(listOf(o), emptySet(), d(2026, 10, 17)).isEmpty())
+    }
+
+    @Test
+    fun leadDaysZeroWarnsOnlyOnTheDayAndAfter() {
+        val due = d(2026, 10, 20)
+        assertEquals(Phase.NORMAL, ReminderPolicy.phase(due, d(2026, 10, 19), false, 0L))
+        assertEquals(Phase.TODAY, ReminderPolicy.phase(due, d(2026, 10, 20), false, 0L))
+        assertEquals(Phase.LATE, ReminderPolicy.phase(due, d(2026, 10, 21), false, 0L))
+    }
+
+    @Test
+    fun leadDaysFourteenWarnsTwoWeeksBefore() {
+        val due = d(2026, 10, 20)
+        assertEquals(Phase.NORMAL, ReminderPolicy.phase(due, d(2026, 10, 5), false, 14L))
+        assertEquals(Phase.SOON, ReminderPolicy.phase(due, d(2026, 10, 6), false, 14L))
+    }
+
+    @Test
+    fun leadDaysChangesWhichRecurrenceIsCurrent() {
+        val oct = Occurrence("a-oct", "a", "薬", MedIcon.PILL, d(2026, 10, 20))
+        val nov = Occurrence("a-nov", "a", "薬", MedIcon.PILL, d(2026, 11, 20))
+        val today = d(2026, 11, 17)
+        assertEquals(listOf("a-oct"), ReminderPolicy.warnings(listOf(oct, nov), emptySet(), today, 2L).map { it.occurrence.key })
+        assertEquals(listOf("a-nov"), ReminderPolicy.warnings(listOf(oct, nov), emptySet(), today, 3L).map { it.occurrence.key })
+    }
 }

@@ -1,0 +1,38 @@
+{
+  "enabled": true,
+  "status": "stale",
+  "leadDays": 2,
+  "timeZone": "Asia/Tokyo",
+  "fetchedAt": 1792465200,
+  "pollSeconds": 60,
+  "occurrences": [
+    {
+      "key": "occ-cal1-L-20261022",
+      "seriesId": "ser-cal1-L",
+      "name": "フロントライン",
+      "date": "2026-10-22",
+      "icon": "drop"
+    },
+    {
+      "key": "occ-cal1-F-20261024",
+      "seriesId": "ser-cal1-F",
+      "name": "フィラリア予防薬",
+      "date": "2026-10-24",
+      "icon": "pill"
+    },
+    {
+      "key": "occ-cal1-L-20261122",
+      "seriesId": "ser-cal1-L",
+      "name": "フロントライン",
+      "date": "2026-11-22",
+      "icon": "drop"
+    },
+    {
+      "key": "occ-cal1-F-20261124",
+      "seriesId": "ser-cal1-F",
+      "name": "フィラリア予防薬",
+      "date": "2026-11-24",
+      "icon": "pill"
+    }
+  ]
+}

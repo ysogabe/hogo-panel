@@ -7,8 +7,9 @@ import android.view.WindowInsetsController
 import android.view.WindowManager
 
 /**
- * 架空データだけの操作モック。通常はホーム、3 分の無操作か時計ボタンで時間帯別の輝度の時計。
- * 通信・保存・権限は持たない。
+ * 通常はホーム、3 分の無操作か時計ボタンで時間帯別の輝度の時計。
+ * 接続設定（`files/api-config.json`。`adb shell run-as` で置く）が無ければ、架空データだけの操作モック（通信しない）。
+ * あれば API モードで、debug ビルドだけが 127.0.0.1 の Mock API から投薬予定を取る。
  */
 class MainActivity : Activity() {
     private lateinit var root: PanelRoot
@@ -16,7 +17,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        root = PanelRoot(this) { level -> applyBrightness(level) }
+        root = PanelRoot(this, ApiConfig.load(filesDir)) { level -> applyBrightness(level) }
         setContentView(root)
         hideSystemBars()
     }

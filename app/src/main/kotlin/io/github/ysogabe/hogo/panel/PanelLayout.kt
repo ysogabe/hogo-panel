@@ -46,13 +46,24 @@ object PanelLayout {
     private const val COLUMN_GAP = 16f
     private const val CARE_GAP = 12f
 
-    /** 警告中の薬カード。1 件なら高さいっぱいの 1 枚、2 件なら上下に分ける。 */
-    fun medBoxes(count: Int): List<Box> {
+    /** 「ほか N 件」の帯の高さ（カードの下）。 */
+    private const val MORE_HEIGHT = 30f
+    private const val MORE_GAP = 6f
+
+    /**
+     * 警告中の薬カード。1 件なら高さいっぱいの 1 枚、2 件なら上下に分ける。
+     * [withMore] のときは、下に「ほか N 件」の帯（[moreBox]）の分だけカードを低くする。
+     */
+    fun medBoxes(count: Int, withMore: Boolean = false): List<Box> {
         if (count <= 0) return emptyList()
         val gap = 16f
-        val h = (content.height - gap * (count - 1)) / count
+        val area = if (withMore) content.height - MORE_HEIGHT - MORE_GAP else content.height
+        val h = (area - gap * (count - 1)) / count
         return List(count) { Box(content.left, content.top + it * (h + gap), MEDS_WIDTH, h) }
     }
+
+    /** 2 枚目のカードの下の「ほか N 件」を置く帯（[medBoxes] を `withMore = true` で作るときだけ使う）。 */
+    val moreBox = Box(content.left, content.bottom - MORE_HEIGHT, MEDS_WIDTH, MORE_HEIGHT)
 
     /** お世話 3 項目。警告がなければ大きな 3 列、あれば右に小さく縦並び。 */
     fun careBoxes(count: Int, withReminder: Boolean): List<Box> {
@@ -185,8 +196,8 @@ object PanelHits {
     private fun homeHit(model: PanelModel, x: Float, y: Float): Hit? {
         if (PanelLayout.clockButton.contains(x, y)) return Hit.ClockButton
         if (PanelLayout.headerHold.contains(x, y)) return Hit.HeaderHold
-        val warnings = model.warnings()
-        PanelLayout.medBoxes(warnings.size).forEachIndexed { i, box ->
+        val warnings = model.shownWarnings()
+        PanelLayout.medBoxes(warnings.size, model.hiddenWarningCount() > 0).forEachIndexed { i, box ->
             if (box.contains(x, y)) return Hit.Med(warnings[i].occurrence.key)
         }
         PanelLayout.careBoxes(model.careCount, warnings.isNotEmpty()).forEachIndexed { i, box ->

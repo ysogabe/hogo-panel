@@ -55,6 +55,10 @@ class PanelView(
         drawIcon(c, Icon.CAT, Box(26f, 24f, 28f, 28f), HEADER_ICON, 1.8f)
         drawText(c, "こむぎ", 66f, 38f, 25f, HEADER_NAME, bold = true)
         drawText(c, localTimeText(), 852f, 38f, 26f, HEADER_TIME, Paint.Align.RIGHT)
+        // API モードの状態（時計には出さない）。時刻の左に、名前との間へ収まるよう末尾を「…」で切る。
+        model.statusText()?.let {
+            drawText(c, it, STATUS_RIGHT, 38f, 22f, STATUS_TEXT, Paint.Align.RIGHT, maxWidth = STATUS_RIGHT - STATUS_LEFT, ellipsize = true)
+        }
         val button = PanelLayout.clockButton
         if (controller.pressed == Hit.ClockButton) {
             fill.color = PRESS
@@ -73,8 +77,9 @@ class PanelView(
 
     private fun drawMeds(c: Canvas, now: Long) {
         val dim = if (controller.pulsing) PulseMath.dim(now) else 0f
-        val warnings = model.warnings()
-        val boxes = PanelLayout.medBoxes(warnings.size)
+        val warnings = model.shownWarnings()
+        val more = model.moreText()
+        val boxes = PanelLayout.medBoxes(warnings.size, more != null)
         warnings.forEachIndexed { i, w ->
             val box = boxes[i]
             val s = MedStyle.of(w.phase)
@@ -90,11 +95,15 @@ class PanelView(
             drawIcon(c, glyph, Box(iconBox.centerX - 16.5f, iconBox.centerY - 16.5f, 33f, 33f), s.icon, 2.5f)
             val textX = box.left + 108f
             val maxW = box.width - 108f - 36f - 20f - 24f
-            drawText(c, w.occurrence.name, textX, box.centerY - 19f, 38f, s.text, bold = true, maxWidth = maxW)
+            drawText(c, w.occurrence.name, textX, box.centerY - 19f, 38f, s.text, bold = true, maxWidth = maxW, ellipsize = true)
             drawText(c, stateLabel(w.phase), textX, box.centerY + 27f, 24f, s.state, maxWidth = maxW)
             fill.color = s.state
             c.drawCircle(box.right - 24f - 18f, box.centerY, 9f, fill)
             if (controller.pressed == Hit.Med(w.occurrence.key)) pressOverlay(c, box, 20f)
+        }
+        if (more != null) {
+            val band = PanelLayout.moreBox
+            drawText(c, more, band.left + 8f, band.centerY, 22f, CARE_SUB, maxWidth = band.width - 16f)
         }
     }
 
@@ -248,16 +257,23 @@ class PanelView(
         bold: Boolean = false,
         maxWidth: Float = Float.MAX_VALUE,
         underline: Boolean = false,
+        /** true なら、幅に収まらない分は文字を縮めず末尾を「…」で切る（薬名）。 */
+        ellipsize: Boolean = false,
     ) {
         text.typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         text.textSize = size
         text.color = color
         text.textAlign = align
         text.isUnderlineText = underline
-        val w = text.measureText(s)
-        if (w > maxWidth && w > 0f) text.textSize = size * maxWidth / w
+        var label = s
+        if (ellipsize) {
+            label = TextEllipsis.fit(s, maxWidth) { text.measureText(it) }
+        } else {
+            val w = text.measureText(s)
+            if (w > maxWidth && w > 0f) text.textSize = size * maxWidth / w
+        }
         val m = text.fontMetrics
-        c.drawText(s, x, cy - (m.ascent + m.descent) / 2f, text)
+        c.drawText(label, x, cy - (m.ascent + m.descent) / 2f, text)
     }
 
     private enum class Icon { CAT, CLOCK, PILL, DROP }
@@ -348,6 +364,11 @@ class PanelView(
         const val HEADER_NAME = 0xFFC9D0C3.toInt()
         const val HEADER_TIME = 0xFFA9B1A2.toInt()
         const val HEADER_BUTTON = 0xFF949F8B.toInt()
+
+        /** 状態の行（ヘッダーの右、時刻の左）。名前「こむぎ」の右端から時刻の左端の手前まで。 */
+        const val STATUS_TEXT = 0xFFC0614A.toInt()
+        const val STATUS_RIGHT = 752f
+        const val STATUS_LEFT = 190f
         const val CARE_FILL = 0xFF212A23.toInt()
         const val CARE_BORDER = 0xFF354034.toInt()
         const val CARE_TEXT = 0xFFD2DDCB.toInt()

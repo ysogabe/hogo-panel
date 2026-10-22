@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hogo Panel 画面モック（hogo-meter 風・本物ではありません）</title>
+<link rel="stylesheet" href="/static/mock.css">
+</head>
+<body>
+<header class="site-header">
+  <h1>hogo-meter <span class="site-header-sub">ダッシュボードの画面モック</span></h1>
+  <p class="notice" role="note">
+    <strong>これは hogo-meter の見た目に寄せたモックで、本物ではありません。</strong>
+    データはすべて架空で、Google には接続しません。ここでの操作は Mock API の状態を変え、パネルの次の取得に反映されます。
+  </p>
+</header>
+
+<div id="banner" class="banner" role="alert" hidden></div>
+
+<div class="layout">
+  <main class="main">
+    <div class="tabs" role="tablist" aria-label="画面">
+      <button type="button" class="tab" role="tab" id="tab-btn-top" data-tab="top" aria-controls="tab-top" aria-selected="true">トップ</button>
+      <button type="button" class="tab" role="tab" id="tab-btn-calendar" data-tab="calendar" aria-controls="tab-calendar" aria-selected="false" tabindex="-1">カレンダー連携</button>
+      <button type="button" class="tab" role="tab" id="tab-btn-device" data-tab="device" aria-controls="tab-device" aria-selected="false" tabindex="-1">デバイス詳細</button>
+    </div>
+
+    <section class="tabpanel" role="tabpanel" id="tab-top" aria-labelledby="tab-btn-top">
+      <p class="expect">期待する表示: 実施済みにしても予定は消えません（パネルは実施をサーバーへ送らない）。表示オフの機器は一目で分かります。</p>
+
+      <div id="status-note" class="note-box" hidden></div>
+
+      <article class="card">
+        <h2>直近の投薬予定</h2>
+        <p class="hint">今日の 7 日前から 30 日後まで・最大 5 件。</p>
+        <ul id="upcoming" class="upcoming"></ul>
+        <p id="upcoming-note" class="empty" hidden></p>
+        <p id="goto-calendar-wrap" hidden><button type="button" class="btn" id="goto-calendar">カレンダー連携の設定を開く</button></p>
+      </article>
+
+      <article class="card">
+        <h2>機器</h2>
+        <div id="device-card" class="device">
+          <div class="device-head">
+            <span class="device-name">リビングのパネル（架空）</span>
+            <span id="device-badge" class="badge"></span>
+          </div>
+          <dl class="kv">
+            <dt>機器 ID</dt><dd>mock-panel-1</dd>
+            <dt>最後の取得</dt><dd id="device-last-fetch">—</dd>
+          </dl>
+          <p id="device-off-note" class="off-note" hidden>投薬表示がオフです。この機器には投薬の警告が出ません。</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="tabpanel" role="tabpanel" id="tab-calendar" aria-labelledby="tab-btn-calendar" hidden>
+      <p class="expect">期待する表示: 接続状態が評価用の切り替え欄の「接続状態」と一致します。警告を始める日数は表示だけで、ここでは変えません。</p>
+
+      <article class="card">
+        <h2>Google カレンダー連携（世帯の設定）</h2>
+        <div class="conn">
+          <span id="conn-badge" class="badge"></span>
+          <p id="conn-text" class="conn-text"></p>
+        </div>
+        <dl class="kv">
+          <dt>最後に取れた時刻</dt><dd id="conn-fetched">—</dd>
+        </dl>
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="btn-connect">Google と接続</button>
+          <button type="button" class="btn" id="btn-disconnect">切断</button>
+        </div>
+        <p class="hint">見せかけです。押しても Google には接続せず、Mock の接続状態だけが変わります。</p>
+      </article>
+
+      <article class="card">
+        <h2>投薬のカレンダー</h2>
+        <fieldset class="radios" id="calendar-choices">
+          <legend class="visually-hidden">投薬の予定を読むカレンダー</legend>
+        </fieldset>
+        <p id="calendar-note" class="hint"></p>
+      </article>
+
+      <article class="card">
+        <h2>警告を始める日数</h2>
+        <p class="lead-days"><span id="lead-days" class="lead-days-num">–</span> 日前から警告を始めます</p>
+        <p class="hint">表示のみ（初期値 2 日）。この画面では編集しません。評価用の切り替え欄で変えます。</p>
+      </article>
+    </section>
+
+    <section class="tabpanel" role="tabpanel" id="tab-device" aria-labelledby="tab-btn-device" hidden>
+      <p class="expect">期待する表示: スイッチをオフにすると、パネルの次の取得で投薬の警告が消えます。</p>
+
+      <article class="card">
+        <h2>デバイス詳細・設定</h2>
+        <p class="device-name">リビングのパネル（架空）</p>
+        <div class="switch-row">
+          <div>
+            <div class="switch-label" id="switch-label">投薬の予定を表示する</div>
+            <div class="hint" id="switch-hint"></div>
+          </div>
+          <button type="button" class="switch" role="switch" id="switch-enabled" aria-labelledby="switch-label" aria-checked="false">
+            <span class="switch-text" id="switch-text">オフ</span>
+          </button>
+        </div>
+        <dl class="kv">
+          <dt>取得間隔</dt><dd id="device-poll">—</dd>
+        </dl>
+      </article>
+    </section>
+  </main>
+
+  <aside class="eval" aria-labelledby="eval-title">
+    <h2 id="eval-title">評価用（本番には無い）</h2>
+    <p class="hint">Mock の状態を変える欄です。パネルは次の取得で反映します。</p>
+
+    <dl class="kv state-kv">
+      <dt>基準日</dt><dd id="st-base">—</dd>
+      <dt>今日</dt><dd id="st-today">—</dd>
+      <dt>サーバー時刻</dt><dd id="st-time">—</dd>
+      <dt>カレンダー</dt><dd id="st-cal">—</dd>
+    </dl>
+    <p id="st-skew" class="note-box" hidden></p>
+
+    <div id="eval-fields" class="fields"></div>
+    <p id="preset-expect" class="expect"></p>
+    <p id="fault-note" class="note-box" hidden></p>
+
+    <h3>パネルからの最近の要求</h3>
+    <div class="table-wrap">
+      <table class="requests">
+        <thead>
+          <tr><th scope="col">時刻</th><th scope="col">メソッド</th><th scope="col">パス</th><th scope="col">ステータス</th><th scope="col">fault</th></tr>
+        </thead>
+        <tbody id="requests-body"></tbody>
+      </table>
+    </div>
+    <p id="requests-empty" class="empty" hidden>まだ要求はありません。</p>
+  </aside>
+</div>
+
+<script src="/static/mock.js"></script>
+</body>
+</html>
