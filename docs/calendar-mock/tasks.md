@@ -7,8 +7,8 @@
 | ID | 内容 | AC | 依存 | 種類 | 状態 | 開始 SHA | コミット | メモ |
 |---|---|---|---|---|---|---|---|---|
 | T1 | API の文書 `api.md` と見本 JSON（`app/src/test/resources/api/medications/*.json`） | AC1 | - | quick | 実装中 | 8fa9a9b | | |
-| T2 | Mock API（`tools/mock-hogo-meter/` の `mock_state.py`・`server.py`・`push-config.sh`・unittest・README） | AC2 | T1 | full | 実装中 | 8fa9a9b | | |
-| T3 | パネルの判定と読み取り（`ReminderPolicy` の警告日数の引数化、`MedicationsJson`、`ApiConfig`、`PanelModel` の API モードと `applySchedule`、確認の回の保持、カード 2 枚と「ほか N 件」、単体テスト） | AC3, AC4, AC5 | T1 | full | 実装中 | 8fa9a9b | | |
+| T2 | Mock API（`tools/mock-hogo-meter/` の `mock_state.py`・`server.py`・`push-config.sh`・unittest・README） | AC2 | T1 | full | 未着手 | | | |
+| T3 | パネルの判定と読み取り（`ReminderPolicy` の警告日数の引数化、`MedicationsJson`、`ApiConfig`、`PanelModel` の API モードと `applySchedule`、確認の回の保持、カード 2 枚と「ほか N 件」、単体テスト） | AC3, AC4, AC5 | T1 | full | 未着手 | | | |
 | T4 | パネルの通信と配線（`HttpScheduleSource`、`ScheduleFetcher`、`PanelController.onSchedule` と `DATE`、`updateClockBadges`、状態の表示、`MainActivity`、debug のマニフェストと network security config、BUILD.md の release 検査） | AC5, AC6, AC7, AC10 | T3 | full | 未着手 | | | |
 | T5 | 画面モック（`static/index.html`・`mock.css`・`mock.js`、1ページ3タブ、評価用の切り替え欄、要求の一覧） | AC8 | T2 | quick | 未着手 | | | |
 | T6 | 実機（Wi-Fi ADB）とブラウザでの評価、`verification.md`、README・BUILD・バージョン 0.3.0、`CALENDAR_INTEGRATION.md` への引き継ぎの注意 | AC8, AC9 | T2, T4, T5 | quick | 未着手 | | | 端末操作は管理側が行い、文書を子に書かせる |
