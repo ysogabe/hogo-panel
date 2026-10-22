@@ -207,9 +207,20 @@ class IdTest(unittest.TestCase):
     def test_same_occurrence_keeps_its_key_across_rebuilds_and_name_changes(self):
         today = date(2026, 10, 22)
         state = state_for(today, preset="soon")
-        first = ms.build_medications(state, today, NOW)["occurrences"][0]["key"]
-        later = ms.build_medications(state, today, NOW + 3600)["occurrences"][0]["key"]
+        first = ms.build_medications(state, today, NOW)["occurrences"][0]
+        later = ms.build_medications(state, today, NOW + 3600)["occurrences"][0]
         self.assertEqual(first, later)
+        original = ms.SERIES["F"]
+        ms.SERIES["F"] = ("名前を変えた薬", original[1])
+        try:
+            renamed = ms.build_medications(state, today, NOW + 7200)["occurrences"][0]
+        finally:
+            ms.SERIES["F"] = original
+        self.assertEqual(renamed["name"], "名前を変えた薬")
+        self.assertNotEqual(renamed["name"], first["name"])
+        self.assertEqual(renamed["key"], first["key"])
+        self.assertEqual(renamed["seriesId"], first["seriesId"])
+        self.assertEqual(ms.build_medications(state, today, NOW)["occurrences"][0], first)
 
 
 class PresetTableTest(unittest.TestCase):

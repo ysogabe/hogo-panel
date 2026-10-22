@@ -226,11 +226,34 @@ class DeviceApiTest(ServerTestCase):
         status, _, _ = fetch(self.dport, "HEAD", "/api/agent/mock-panel-1/medications", {server.SECRET_HEADER: SECRET})
         self.assertEqual(status, 405)
 
+    def test_unknown_methods_get_the_host_check_then_405(self):
+        for port in (self.dport, self.uport):
+            for method in ("TRACE", "CONNECT", "PROPFIND", "FOO", "LINK"):
+                with self.subTest(port=port, method=method, host="wrong"):
+                    status, _, body = fetch(port, method, "/api/agent/mock-panel-1/medications",
+                                            {"Host": "evil.example"})
+                    self.assertEqual(status, 421)
+                    self.assertEqual(json.loads(body), {"error": "misdirected request"})
+                with self.subTest(port=port, method=method, host="missing"):
+                    self.assertEqual(fetch(port, method, "/", host=False)[0], 421)
+                with self.subTest(port=port, method=method, host="right"):
+                    status, _, body = fetch(port, method, "/api/agent/mock-panel-1/medications",
+                                            {server.SECRET_HEADER: SECRET})
+                    self.assertEqual(status, 405)
+                    self.assertEqual(json.loads(body), {"error": "method not allowed"})
+
     def test_error_bodies_match_the_samples(self):
         def sample(name):
             return json.loads((SAMPLES / name).read_text(encoding="utf-8"))
         self.assertEqual(json.loads(self.medications(secret="x")[2]), sample("error-401.json"))
         self.assertEqual(json.loads(self.medications(device_id="zzz")[2]), sample("error-404.json"))
+        for path in ("/", "/api/agent/mock-panel-1", "/api/agent/mock-panel-1/medications/x", "/mock/state"):
+            with self.subTest(path=path):
+                status, _, body = fetch(self.dport, "GET", path, {server.SECRET_HEADER: SECRET})
+                self.assertEqual(status, 404)
+                self.assertEqual(json.loads(body), sample("error-404.json"))
+        status, _, body = fetch(self.dport, "GET", "/nope", {server.SECRET_HEADER: "wrong"})
+        self.assertEqual(json.loads(body), sample("error-404.json"))
         self.set_state(fault="serverError")
         status, _, body = self.medications()
         self.assertEqual(status, 500)
@@ -503,12 +526,58 @@ class SecretAndLogTest(ServerTestCase):
         self.assertEqual(len(entries), 50)
         self.assertNotIn("token", json.dumps(entries))
 
-    def test_request_log_cleans_odd_paths(self):
+    def test_request_log_replaces_odd_paths_with_a_fixed_label(self):
         raw_exchange(self.dport, b"GET /" + b"a" * 120 + "\u00e9\x01".encode("utf-8") + b" HTTP/1.0\r\nHost: 127.0.0.1:%d\r\n\r\n"
                      % self.dport)
-        path = self.get_json(self.uport, "/mock/requests")["requests"][0]["path"]
-        self.assertLessEqual(len(path), 128)
-        self.assertTrue(all(" " <= ch <= "~" for ch in path))
+        entry = self.get_json(self.uport, "/mock/requests")["requests"][0]
+        self.assertEqual(entry["path"], server.LOG_OTHER_PATH)
+
+    def logged(self):
+        return self.get_json(self.uport, "/mock/requests")["requests"]
+
+    def test_secret_in_the_path_is_not_logged(self):
+        for path in ("/" + SECRET, "/api/" + SECRET, "/api/agent/mock-panel-1/" + SECRET,
+                     "/api/agent/mock-panel-1/medications/" + SECRET, "/mock/" + SECRET,
+                     "/" + SECRET + "?x=" + SECRET, "/" + SECRET + "#" + SECRET):
+            with self.subTest(path=path):
+                status, _, _ = fetch(self.dport, "GET", path, {server.SECRET_HEADER: SECRET})
+                self.assertEqual(status, 404)
+        entries = self.logged()
+        self.assertEqual(len(entries), 7)
+        self.assertNotIn(SECRET, json.dumps(entries))
+        self.assertEqual({e["path"] for e in entries}, {server.LOG_OTHER_PATH})
+
+    def test_secret_in_the_device_id_position_is_not_logged(self):
+        # 秘密は deviceId の文字種・長さに合うので、パスの形だけでは弾けない
+        self.assertRegex(SECRET, r"[A-Za-z0-9_-]{1,64}")
+        for secret_header in (SECRET, "wrong"):
+            for path in ("/api/agent/%s/medications" % SECRET, "/api/agent/%s/medications?k=%s" % (SECRET, SECRET)):
+                status, _, _ = fetch(self.dport, "GET", path, {server.SECRET_HEADER: secret_header})
+                self.assertIn(status, (401, 404))
+        entries = self.logged()
+        self.assertEqual(len(entries), 4)
+        self.assertNotIn(SECRET, json.dumps(entries))
+        self.assertEqual({e["path"] for e in entries},
+                         {"/api/agent/%s/medications" % server.LOG_OTHER_DEVICE})
+
+    def test_secret_in_the_method_or_a_wrong_host_request_is_not_logged(self):
+        raw_exchange(self.dport, ("%s /api/agent/mock-panel-1/medications HTTP/1.0\r\nHost: %s\r\n\r\n"
+                                  % (SECRET, SECRET)).encode())
+        fetch(self.dport, "GET", "/" + SECRET, {"Host": SECRET})
+        fetch(self.dport, "GET", "/api/agent/%s/medications" % SECRET, {"Host": "evil.example"})
+        entries = self.logged()
+        self.assertEqual(len(entries), 3)
+        self.assertEqual([e["status"] for e in entries], [421, 421, 421])
+        self.assertNotIn(SECRET, json.dumps(entries))
+        self.assertEqual(entries[0]["method"], server.LOG_OTHER_METHOD)
+
+    def test_request_log_keeps_the_real_device_id_and_known_methods(self):
+        self.medications()
+        fetch(self.dport, "TRACE", "/api/agent/mock-panel-1/medications")
+        entries = self.logged()
+        self.assertEqual([(e["method"], e["path"]) for e in entries],
+                         [("GET", "/api/agent/mock-panel-1/medications"),
+                          ("TRACE", "/api/agent/mock-panel-1/medications")])
 
     def test_server_writes_nothing_to_stderr_or_stdout(self):
         err, out = io.StringIO(), io.StringIO()

@@ -44,6 +44,10 @@ CLIENT_TIMEOUT_SECONDS = 30
 
 _DEVICE_PATH_RE = re.compile(r"/api/agent/([A-Za-z0-9_-]{1,64})/medications")
 _LENGTH_RE = re.compile(r"[0-9]{1,9}")
+_LOGGED_METHODS = frozenset(("GET", "POST", "HEAD", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE", "CONNECT"))
+LOG_OTHER_PATH = "<other path>"
+LOG_OTHER_METHOD = "<other method>"
+LOG_OTHER_DEVICE = "<other>"
 
 ERR_UNAUTHORIZED = {"error": "unauthorized"}
 ERR_NOT_FOUND = {"error": "not found"}
@@ -102,8 +106,8 @@ class MockApp:
         return mock_state.build_medications(state, mock_state.today_in_zone(state["timeZone"], now), now)
 
     def log_request(self, method, path, status, size, fault):
-        clean = "".join(ch if " " <= ch <= "~" else "?" for ch in path)[:128]
-        entry = {"time": int(self.now()), "method": method, "path": clean,
+        """method・path は呼び出し側が固定の表示に伏せたものだけを渡す (要求の文字列をそのまま残さない)。"""
+        entry = {"time": int(self.now()), "method": method, "path": path,
                  "status": status, "bytes": size, "fault": fault}
         with self._lock:
             self._requests.append(entry)
@@ -164,6 +168,19 @@ class Handler(BaseHTTPRequestHandler):
     def _path(self):
         return self.path.split("?", 1)[0].split("#", 1)[0]
 
+    def _loggable(self):
+        """(method, path): 要求一覧に残す表示。秘密がパス・メソッド・クエリのどこに入っていても残らないよう、
+        機器向け API の正しい形のときだけパスを残し (deviceId は設定の値と一致するときだけ)、他は固定の表示にする。"""
+        method = self.command if self.command in _LOGGED_METHODS else LOG_OTHER_METHOD
+        match = _DEVICE_PATH_RE.fullmatch(self._path())
+        if match is None:
+            return method, LOG_OTHER_PATH
+        device_id = self.server.app.device_id
+        given = match.group(1)
+        if not hmac.compare_digest(given.encode("ascii"), device_id.encode("ascii")):
+            given = LOG_OTHER_DEVICE
+        return method, "/api/agent/%s/medications" % given
+
     def _host_ok(self):
         host = self.headers.get("Host")
         if host is None:
@@ -195,7 +212,8 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         finally:
             if self.server.role == "device":
-                self.server.app.log_request(method, self._path(), self._sent[0], self._sent[1], self._fault)
+                logged_method, logged_path = self._loggable()
+                self.server.app.log_request(logged_method, logged_path, self._sent[0], self._sent[1], self._fault)
 
     def do_GET(self):
         self._dispatch("GET")
@@ -203,14 +221,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         self._dispatch("POST")
 
-    do_HEAD = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = lambda self: self._dispatch(self.command)
+    def __getattr__(self, name):
+        # do_<METHOD> が無いメソッド (TRACE・CONNECT・任意の名前) も共通の入口に通し、Host の検証 (421) のあとで 405 にする。
+        # 標準の実装は do_<METHOD> が無いと、Host を見ずに 501 を返す。
+        if name.startswith("do_"):
+            return lambda: self._dispatch(self.command)
+        raise AttributeError(name)
 
     # --- 8787: 機器向け API ---
     def _handle_device(self, method):
         app = self.server.app
         match = _DEVICE_PATH_RE.fullmatch(self._path())
         if method != "GET" or match is None:
-            self._send_json(404, ERR_NOT_FOUND)
+            self._send_json(404, ERR_DEVICE_NOT_FOUND)  # api.md: deviceId 違いもパス違いも同じ本文
             return
         given = (self.headers.get(SECRET_HEADER) or "").encode("latin-1", "replace")
         if not hmac.compare_digest(given, app.secret.encode("ascii")):

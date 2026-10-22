@@ -60,7 +60,7 @@ adb -s <アドレス>:5555 shell am start -n io.github.ysogabe.hogo.panel/.MainA
 |---|---|---|
 | `GET /mock/state` | 評価状態（`state`）、選べる値（`choices`）、サーバーの今日（`today`）、`serverTime` | |
 | `POST /mock/state` | 部分更新。`Content-Type: application/json`、本文 16 KiB まで、`Origin` が同じ（`http://127.0.0.1:8788` か `http://localhost:8788`） | 成功時は `GET` と同じ内容 |
-| `GET /mock/requests` | 機器向け API への直近 50 件（時刻・メソッド・パス・ステータス・バイト数・fault）。秘密・ヘッダー・クエリは記録しない | |
+| `GET /mock/requests` | 機器向け API への直近 50 件（時刻・メソッド・パス・ステータス・バイト数・fault）。秘密・ヘッダー・クエリは記録しない。パスは機器向け API の正しい形のときだけ残し（`deviceId` が設定と違えば `<other>`）、それ以外は `<other path>` に置き換える | |
 | `GET /mock/preview` | いまパネルが 200 で受ける本文（fault を除く）。画面モックの表示用 | |
 
 評価状態のキー: `preset`（`normal` / `soon` / `today` / `overdue` / `expired` / `two` / `three` / `longName` / `none`）、`baseDate`（`YYYY-MM-DD`）、`status`（`ok` / `stale` / `fetchFailed` / `reauthRequired` / `notConnected`）、`calendarId`（`mock-cal-1` / `mock-cal-2`）、`enabled`、`leadDays`（0〜14）、`pastDays`（0〜31）、`fault`（`none` / `unauthorized` / `serverError` / `slow` / `malformed` / `deepNesting`）、`pollSeconds`（1〜86400）、`timeZone`（`Asia/Tokyo` のような地域 ID か `UTC`）。
