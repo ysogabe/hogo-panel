@@ -531,6 +531,17 @@ class GarbageParseTest(unittest.TestCase):
         self.assertEqual([sid for sid, _, _ in result], ["ok1"])
         self.assertEqual(result[0][2], [date(2026, 10, 22)])
 
+    def test_series_with_unencodable_names_are_dropped_and_the_rest_kept(self):
+        # JSON の \ud800 は孤立サロゲートになり、UTF-8 にできない。ほかの不正な系列と同じく、その系列だけ捨てる
+        text = ('{"series": [{"id": "ok1", "name": "架空ごみ", "dates": ["2026-10-22"]},'
+                ' {"id": "lone", "name": "\\ud800", "dates": ["2026-10-22"]},'
+                ' {"id": "mix", "name": "架空\\udc00ごみ", "dates": ["2026-10-22"]},'
+                ' {"id": "ok2", "name": "架空ごみ2", "dates": ["2026-10-23"]}]}')
+        result = ms.parse_garbage(text)
+        self.assertEqual([sid for sid, _, _ in result], ["ok1", "ok2"])
+        for _, name, _ in result:
+            name.encode("utf-8")
+
     def test_accepts_id_edges(self):
         series = [{"id": "a" * 16, "name": "x", "dates": []}, {"id": "0", "name": "x", "dates": []}]
         self.assertEqual([sid for sid, _, _ in ms.parse_garbage(garbage_doc(series))], ["a" * 16, "0"])
@@ -634,6 +645,19 @@ class GarbageOccurrenceTest(unittest.TestCase):
         self.assertGreater(sum(1 for o in occs if o.get("dayOnly")), 10)
         check_api_shape(self, ms.build_medications(state, self.TODAY, NOW, self.series))
 
+    def test_unencodable_series_does_not_break_the_response(self):
+        text = ('{"series": [{"id": "ok1", "name": "架空ごみ", "dates": ["2026-10-22"]},'
+                ' {"id": "lone", "name": "\\ud800", "dates": ["2026-10-22"]}]}')
+        state = state_for(self.TODAY, preset="three")
+        for body in (ms.build_medications(state, self.TODAY, NOW, ms.parse_garbage(text)),
+                     ms.build_schedule(state, self.TODAY, NOW, ms.parse_garbage(text))):
+            ms.encode_json(body)
+            keys = [o["key"] for o in body["occurrences"]]
+            self.assertIn("occ-gomi-ok1-20261022", keys)
+            self.assertNotIn("occ-gomi-lone-20261022", keys)
+        medicines = ms.build_medications(state, self.TODAY, NOW, ms.parse_garbage(text))["occurrences"]
+        self.assertEqual(sum(1 for o in medicines if "dayOnly" not in o), 3)
+
     def test_garbage_off_not_connected_and_disabled_return_none(self):
         self.assertEqual(self.body(garbage=False)["occurrences"], [])
         self.assertEqual(self.body(status="notConnected")["occurrences"], [])
@@ -665,15 +689,57 @@ class GarbageOccurrenceTest(unittest.TestCase):
                 self.assertEqual(ms.build_schedule(state_for(self.TODAY, preset="none", **patch), self.TODAY, NOW,
                                                    self.series)["occurrences"], [])
 
-    def test_worst_case_stays_within_200_occurrences_and_64_kib(self):
+    def worst_case(self, **overrides):
         every_day = [(date(2026, 1, 1) + timedelta(days=i)).isoformat() for i in range(800)]
         series = [{"id": "s%d" % i, "name": "あ" * 40, "dates": every_day} for i in range(ms.GARBAGE_MAX_SERIES)]
         parsed = ms.parse_garbage(garbage_doc(series))
-        state = state_for(self.TODAY, preset="three", pastDays=31)
-        body = ms.build_medications(state, self.TODAY, NOW, parsed)
+        state = state_for(self.TODAY, preset="three", pastDays=31, **overrides)
+        return ms.build_medications(state, self.TODAY, NOW, parsed)
+
+    def test_worst_case_stays_within_200_occurrences_and_64_kib(self):
+        body = self.worst_case()
         self.assertEqual(len(body["occurrences"]), ms.MAX_OCCURRENCES)
         self.assertLessEqual(len(ms.encode_json(body)), 64 * 1024)
         check_api_shape(self, body)
+
+    def test_cap_keeps_every_medicine_and_todays_garbage_before_past_garbage(self):
+        occs = self.worst_case()["occurrences"]
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        self.assertEqual(occs, sorted(occs, key=lambda o: (o["date"], o["key"])))
+        trash = [o for o in occs if o.get("dayOnly")]
+        self.assertEqual(len(trash), ms.MAX_OCCURRENCES - 3)
+        today = [o for o in trash if o["date"] == self.TODAY.isoformat()]
+        self.assertEqual(len(today), ms.GARBAGE_MAX_SERIES)
+        # 今日以降が 197 件を満たすので、過去のゴミは 1 件も入らない。今日以降は日付の近い順
+        self.assertEqual(min(o["date"] for o in trash), self.TODAY.isoformat())
+        self.assertEqual(max(o["date"] for o in trash), (self.TODAY + timedelta(days=9)).isoformat())
+
+    def test_cap_fills_the_rest_with_past_garbage_nearest_first(self):
+        past = [(self.TODAY - timedelta(days=i)).isoformat() for i in range(1, 16)]
+        series = [{"id": "s%d" % i, "name": "x", "dates": past} for i in range(ms.GARBAGE_MAX_SERIES)]
+        state = state_for(self.TODAY, preset="three", pastDays=31)
+        occs = ms.build_medications(state, self.TODAY, NOW, ms.parse_garbage(garbage_doc(series)))["occurrences"]
+        self.assertEqual(len(occs), ms.MAX_OCCURRENCES)
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        trash = [o for o in occs if o.get("dayOnly")]
+        self.assertEqual(max(o["date"] for o in trash), (self.TODAY - timedelta(days=1)).isoformat())
+        self.assertEqual(min(o["date"] for o in trash), (self.TODAY - timedelta(days=10)).isoformat())
+        self.assertEqual(occs, sorted(occs, key=lambda o: (o["date"], o["key"])))
+
+    def test_cap_with_upcoming_not_enough_adds_upcoming_first_then_past(self):
+        dates = [(self.TODAY + timedelta(days=i)).isoformat() for i in range(-12, 3)]  # 過去 12 日・今日・先 2 日
+        series = [{"id": "s%d" % i, "name": "x", "dates": dates} for i in range(ms.GARBAGE_MAX_SERIES)]
+        state = state_for(self.TODAY, preset="none", pastDays=31)
+        occs = ms.build_medications(state, self.TODAY, NOW, ms.parse_garbage(garbage_doc(series)))["occurrences"]
+        self.assertEqual(len(occs), ms.MAX_OCCURRENCES)
+        by_date = {}
+        for occ in occs:
+            by_date[occ["date"]] = by_date.get(occ["date"], 0) + 1
+        for offset in range(0, 3):  # 今日以降 3 日 60 件はすべて入る
+            self.assertEqual(by_date[(self.TODAY + timedelta(days=offset)).isoformat()], 20)
+        self.assertEqual(by_date[(self.TODAY - timedelta(days=1)).isoformat()], 20)
+        self.assertNotIn((self.TODAY - timedelta(days=8)).isoformat(), by_date)  # 140 件目まで: 7 日分 (-1 .. -7)
+        self.assertEqual(by_date[(self.TODAY - timedelta(days=7)).isoformat()], 20)
 
     def test_typical_amount_is_about_thirty(self):
         count = len(ms.build_schedule(state_for(self.TODAY, preset="none"), self.TODAY, NOW, self.series)["occurrences"])

@@ -780,6 +780,32 @@ class GarbageApiTest(ServerTestCase):
             self.assertEqual(status, 400)
         self.assertIs(self.app.snapshot()["garbage"], False)
 
+    def test_unencodable_series_is_dropped_and_the_responses_stay_200(self):
+        text = ('{"series": [{"id": "ok1", "name": "架空ごみ", "dates": ["2026-10-22"]},'
+                ' {"id": "lone", "name": "\\ud800", "dates": ["2026-10-22"]}]}')
+        original = self.app.garbage
+        self.addCleanup(setattr, self.app, "garbage", original)
+        self.app.garbage = ms.parse_garbage(text)
+        self.set_state(preset="three")
+        occs = self.device_body()["occurrences"]
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        self.assertEqual([o["key"] for o in occs if o.get("dayOnly")], ["occ-gomi-ok1-20261022"])
+        self.assertEqual(len(self.get_json(self.uport, "/mock/preview")["occurrences"]), 4)
+        self.assertEqual([o["key"] for o in self.get_json(self.uport, "/mock/schedule")["occurrences"]
+                          if o.get("dayOnly")], ["occ-gomi-ok1-20261022"])
+
+    def test_cap_keeps_medicines_and_todays_garbage(self):
+        every_day = [(TODAY + timedelta(days=i)).isoformat() for i in range(-60, 60)]
+        series = [{"id": "s%d" % i, "name": "x", "dates": every_day} for i in range(ms.GARBAGE_MAX_SERIES)]
+        original = self.app.garbage
+        self.addCleanup(setattr, self.app, "garbage", original)
+        self.app.garbage = ms.parse_garbage(json.dumps({"series": series}))
+        self.set_state(preset="three", pastDays=31)
+        occs = self.device_body()["occurrences"]
+        self.assertEqual(len(occs), 200)
+        self.assertEqual(sum(1 for o in occs if "dayOnly" not in o), 3)
+        self.assertEqual(sum(1 for o in occs if o["date"] == TODAY.isoformat() and o.get("dayOnly")), 20)
+
     def test_garbage_does_not_change_the_secret_checks_or_the_log(self):
         self.assertEqual(self.medications(secret="wrong")[0], 401)
         self.assertEqual(self.medications(device_id="zzz")[0], 404)

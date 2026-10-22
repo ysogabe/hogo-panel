@@ -250,6 +250,15 @@ def public_state(state):
     return {key: state[key] for key in STATE_KEYS}
 
 
+def _is_utf8_encodable(text):
+    """孤立サロゲートを含む文字列は UTF-8 にできない (応答の組み立てで落ちる)。"""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 class GarbageError(ValueError):
     """ゴミ収集の定義が読めない。メッセージに中身は入れない。"""
 
@@ -259,8 +268,8 @@ def parse_garbage(text):
 
     形: {"calendarName": ..., "dayOnly": true, "series": [{"id", "name", "dates": ["YYYY-MM-DD", ...]}]}。
     全体が読めない (JSON でない・オブジェクトでない・series が配列でない) なら GarbageError。
-    外れた系列 (id が `[a-z0-9]{1,16}` でない・重複・名前が空・dates が配列でない) と外れた日付は捨てる。
-    名前は sanitize_name の規則 (送り手の規則) で整える。dates は昇順・重複なしにする。
+    外れた系列 (id が `[a-z0-9]{1,16}` でない・重複・名前が空か UTF-8 にできない・dates が配列でない) と
+    外れた日付は捨てる。名前は sanitize_name の規則 (送り手の規則) で整える。dates は昇順・重複なしにする。
     """
     try:
         doc = json.loads(text, parse_constant=_reject_constant, object_pairs_hook=_no_duplicate_keys)
@@ -279,7 +288,7 @@ def parse_garbage(text):
         if not isinstance(name, str) or not isinstance(dates, list):
             continue
         name = sanitize_name(name)
-        if not name:
+        if not name or not _is_utf8_encodable(name):
             continue
         good = set()
         for text_date in dates[:GARBAGE_MAX_DATES]:
@@ -309,34 +318,49 @@ def garbage_occurrences(series, low, high):
     return result
 
 
-def occurrences_between(state, low, high, garbage=()):
+def occurrences_between(state, low, high, garbage=(), today=None):
     """状態から返す回の一覧 (範囲 low .. high、両端を含む。日付・key の昇順。最大 MAX_OCCURRENCES 件)。
-    `garbage` は parse_garbage の結果で、状態の garbage が true のときだけ薬の回に加える。"""
+    `garbage` は parse_garbage の結果で、状態の garbage が true のときだけ薬の回に加える。
+    上限を超えるときは薬の回を先に入れ、残りの枠に今日 (`today`) 以降のゴミの回を日付の近い順、
+    それでも余れば過去のゴミの回を今日に近い順に入れる (`today` 省略時は low を今日とみなす)。"""
     base = date.fromisoformat(state["baseDate"])
-    result = []
+    medicines = []
     for series, offset in PRESET_OCCURRENCES[state["preset"]]:
         when = base + timedelta(days=offset)
         if not low <= when <= high:
             continue
         name, icon = SERIES[series]
         key, sid = occurrence_ids(state["calendarId"], series, when)
-        result.append({
+        medicines.append({
             "key": key,
             "seriesId": sid,
             "name": sanitize_name(name),
             "date": when.isoformat(),
             "icon": icon,
         })
+    order = lambda occ: (occ["date"], occ["key"])
+    medicines.sort(key=order)
+    if len(medicines) >= MAX_OCCURRENCES:
+        return medicines[:MAX_OCCURRENCES]
+    result = medicines
     if state["garbage"]:
-        result.extend(garbage_occurrences(garbage, low, high))
-    result.sort(key=lambda occ: (occ["date"], occ["key"]))
-    return result[:MAX_OCCURRENCES]
+        pivot = (low if today is None else today).isoformat()
+        trash = sorted(garbage_occurrences(garbage, low, high), key=order)
+        upcoming = [occ for occ in trash if occ["date"] >= pivot]
+        past = [occ for occ in trash if occ["date"] < pivot]
+        room = MAX_OCCURRENCES - len(medicines)
+        result = medicines + upcoming[:room]
+        room = MAX_OCCURRENCES - len(result)
+        if room > 0:
+            result += past[::-1][:room]
+    result.sort(key=order)
+    return result
 
 
 def occurrences_for(state, today, garbage=()):
     """機器向け API の回の一覧 (範囲 today-pastDays .. today+60、両端を含む)。"""
     return occurrences_between(state, today - timedelta(days=state["pastDays"]),
-                               today + timedelta(days=FUTURE_DAYS), garbage)
+                               today + timedelta(days=FUTURE_DAYS), garbage, today)
 
 
 def build_medications(state, today, now_epoch, garbage=()):
@@ -363,7 +387,7 @@ def build_schedule(state, today, now_epoch, garbage=()):
         return body
     body["fetchedAt"] = max(0, int(now_epoch) - FETCHED_AGO[status])
     body["occurrences"] = occurrences_between(state, today - timedelta(days=SCHEDULE_PAST_DAYS),
-                                              today + timedelta(days=SCHEDULE_FUTURE_DAYS), garbage)
+                                              today + timedelta(days=SCHEDULE_FUTURE_DAYS), garbage, today)
     return body
 
 

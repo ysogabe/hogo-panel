@@ -120,7 +120,8 @@ adb -s <アドレス>:5555 shell am start -n io.github.ysogabe.hogo.panel/.MainA
 - `series[].name`: 回の `name`。前後の空白と制御文字を除き、40 文字までに切る。空になる種類は捨てる。
 - `series[].dates`: `YYYY-MM-DD` の実在する日付。基準日（preset）に関係なく、書いた日付のまま使う。
 - 返す回は `icon: "trash"`・`dayOnly: true`。範囲は薬と同じ（機器向けは今日 −`pastDays`〜+60 日、`/mock/schedule` は −7〜+30 日）。薬のカレンダーの選択には関係しない。接続状態が `notConnected` なら返さず、`enabled:false` の応答は薬と同じく回を持たない。画面モックの切り替え欄の「ゴミ収集カレンダー」（`garbage`）で入り切りする。
-- 外れた種類（`id` の誤り・重複・名前が空・`dates` が配列でない）と外れた日付は捨てて起動を続ける。種類は 20、1 種類の日付は 800 まで、ファイルは 256 KiB まで。
+- 外れた種類（`id` の誤り・重複・名前が空か UTF-8 にできない（孤立サロゲートなど）・`dates` が配列でない）と外れた日付は捨てて起動を続ける。種類は 20、1 種類の日付は 800 まで、ファイルは 256 KiB まで。
+- 返す回が 200 件を超えるときは、薬の回をすべて先に入れ、残りの枠に今日以降のゴミの回を日付の近い順、それでも余れば過去のゴミの回を今日に近い順に入れる（最後に日付順に並べ直す）。dayOnly の回はパネルでは当日しか使わないので、過去のゴミを後回しにする。
 - ファイルが無い・壊れている（JSON として読めない・大きすぎる・`series` が配列でない）ときは、ゴミの回を出さずに起動を続け、起動時にパスと「読めなかった」ことだけを表示する（中身は出さない）。画面モックの切り替え欄は無効になり「local/garbage.json が無い」と出る。
 - ファイルは起動時に 1 回だけ読む。置いた・直したら `server.py` を起動し直す。パスは `server.py` の場所からの固定で、引数・環境変数では変えられない。
 - 単体テストは架空の見本 `testdata/garbage-sample.json` を使う。実際のプロセスを起動する起動・終了の試験（`ProcessLifecycleTest`）だけは、`local/garbage.json` があればそれを読むが、表示するのは種類の数だけで、結果の判定には使わない。
@@ -154,7 +155,7 @@ cd tools/mock-hogo-meter
 python3 -m unittest -v
 ```
 
-テストは空いているポートで起動する（本番の起動は 8787/8788 固定）。`app/src/test/resources/api/medications/` の見本 JSON と同じキー・型になることも確かめる。ゴミ収集は架空の見本 `testdata/garbage-sample.json` で確かめる（範囲、`key` の形、`dayOnly`・`icon`、未接続・表示オフ・`garbage:false` で出ないこと、ファイルが無い・壊れている・誤りのあるとき、`/mock/schedule`、件数と大きさの上限）。
+テストは空いているポートで起動する（本番の起動は 8787/8788 固定）。`app/src/test/resources/api/medications/` の見本 JSON と同じキー・型になることも確かめる。ゴミ収集は架空の見本 `testdata/garbage-sample.json` で確かめる（範囲、`key` の形、`dayOnly`・`icon`、未接続・表示オフ・`garbage:false` で出ないこと、ファイルが無い・壊れている・誤り（UTF-8 にできない名前を含む）のあるとき、`/mock/schedule`、件数と大きさの上限、上限で薬と今日以降を優先すること）。
 
 ## 公開してよい記録だけを残す
 
