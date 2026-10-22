@@ -272,7 +272,7 @@ class PanelController(
     /** ホームで確認・メニューが開いておらず、当日・超過の薬が未記録で残っているときだけ動かす。 */
     private fun pulseNeeded(): Boolean =
         model.screen == Screen.HOME && !model.menuOpen && model.confirmation == null &&
-            model.warnings().any { PulseMath.animates(it.phase) }
+            model.shownWarnings().any { PulseMath.animates(it.phase) }
 
     private fun syncPulse() {
         val need = pulseNeeded()

@@ -134,4 +134,52 @@ class PanelLayoutTest {
         val b = PanelLayout.medBoxes(2)[0]
         assertNull(PanelHits.at(m, b.centerX, b.centerY, 0))
     }
+
+    @Test
+    fun medCardsWithMoreLeaveABandBelowTheSecondCard() {
+        val meds = PanelLayout.medBoxes(2, withMore = true)
+        val more = PanelLayout.moreBox
+        meds.forEach(::inStage)
+        inStage(more)
+        assertFalse(meds[0].intersects(meds[1]))
+        meds.forEach { assertFalse(it.intersects(more)) }
+        assertTrue(meds[1].bottom < more.top)
+        assertEquals(PanelLayout.content.bottom, more.bottom, 0.01f)
+        assertEquals(PanelLayout.content.top, meds[0].top, 0.01f)
+        // カードは「ほか」が無いときより低いが、タッチ対象として十分な高さを保つ。
+        assertTrue(meds[0].height < PanelLayout.medBoxes(2)[0].height)
+        assertTrue(meds[0].height >= 58f)
+        PanelLayout.careBoxes(3, withReminder = true).forEach { c ->
+            meds.forEach { assertFalse(it.intersects(c)) }
+            assertFalse(more.intersects(c))
+        }
+    }
+
+    @Test
+    fun withoutMoreTheCardGeometryIsUnchanged() {
+        assertEquals(PanelLayout.medBoxes(2), PanelLayout.medBoxes(2, withMore = false))
+        assertEquals(PanelLayout.content.height, PanelLayout.medBoxes(1)[0].height, 0.01f)
+    }
+
+    @Test
+    fun threeWarningsHitTestOnlyTheTwoShownCards() {
+        val m = PanelModel(0L).also { it.enterApiMode(java.time.LocalDate.of(2026, 10, 22)) }
+        val today = java.time.LocalDate.of(2026, 10, 22)
+        m.applySchedule(
+            ScheduleResult.Loaded(
+                SourceStatus.OK, 2, null, null, null,
+                listOf(
+                    Occurrence("f", "f", "F", MedIcon.PILL, today.plusDays(2)),
+                    Occurrence("l", "l", "L", MedIcon.DROP, today),
+                    Occurrence("m", "m", "M", MedIcon.PILL, today.minusDays(1)),
+                ),
+            ),
+            today,
+        )
+        val boxes = PanelLayout.medBoxes(2, withMore = true)
+        assertEquals(Hit.Med("m"), PanelHits.at(m, boxes[0].centerX, boxes[0].centerY, 0L))
+        assertEquals(Hit.Med("l"), PanelHits.at(m, boxes[1].centerX, boxes[1].centerY, 0L))
+        // 「ほか N 件」の帯は何も起こさない。
+        assertEquals(null, PanelHits.at(m, PanelLayout.moreBox.centerX, PanelLayout.moreBox.centerY, 0L))
+    }
 }

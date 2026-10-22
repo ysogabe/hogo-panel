@@ -73,8 +73,9 @@ class PanelView(
 
     private fun drawMeds(c: Canvas, now: Long) {
         val dim = if (controller.pulsing) PulseMath.dim(now) else 0f
-        val warnings = model.warnings()
-        val boxes = PanelLayout.medBoxes(warnings.size)
+        val warnings = model.shownWarnings()
+        val more = model.moreText()
+        val boxes = PanelLayout.medBoxes(warnings.size, more != null)
         warnings.forEachIndexed { i, w ->
             val box = boxes[i]
             val s = MedStyle.of(w.phase)
@@ -90,11 +91,15 @@ class PanelView(
             drawIcon(c, glyph, Box(iconBox.centerX - 16.5f, iconBox.centerY - 16.5f, 33f, 33f), s.icon, 2.5f)
             val textX = box.left + 108f
             val maxW = box.width - 108f - 36f - 20f - 24f
-            drawText(c, w.occurrence.name, textX, box.centerY - 19f, 38f, s.text, bold = true, maxWidth = maxW)
+            drawText(c, w.occurrence.name, textX, box.centerY - 19f, 38f, s.text, bold = true, maxWidth = maxW, ellipsize = true)
             drawText(c, stateLabel(w.phase), textX, box.centerY + 27f, 24f, s.state, maxWidth = maxW)
             fill.color = s.state
             c.drawCircle(box.right - 24f - 18f, box.centerY, 9f, fill)
             if (controller.pressed == Hit.Med(w.occurrence.key)) pressOverlay(c, box, 20f)
+        }
+        if (more != null) {
+            val band = PanelLayout.moreBox
+            drawText(c, more, band.left + 8f, band.centerY, 22f, CARE_SUB, maxWidth = band.width - 16f)
         }
     }
 
@@ -248,16 +253,23 @@ class PanelView(
         bold: Boolean = false,
         maxWidth: Float = Float.MAX_VALUE,
         underline: Boolean = false,
+        /** true なら、幅に収まらない分は文字を縮めず末尾を「…」で切る（薬名）。 */
+        ellipsize: Boolean = false,
     ) {
         text.typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         text.textSize = size
         text.color = color
         text.textAlign = align
         text.isUnderlineText = underline
-        val w = text.measureText(s)
-        if (w > maxWidth && w > 0f) text.textSize = size * maxWidth / w
+        var label = s
+        if (ellipsize) {
+            label = TextEllipsis.fit(s, maxWidth) { text.measureText(it) }
+        } else {
+            val w = text.measureText(s)
+            if (w > maxWidth && w > 0f) text.textSize = size * maxWidth / w
+        }
         val m = text.fontMetrics
-        c.drawText(s, x, cy - (m.ascent + m.descent) / 2f, text)
+        c.drawText(label, x, cy - (m.ascent + m.descent) / 2f, text)
     }
 
     private enum class Icon { CAT, CLOCK, PILL, DROP }

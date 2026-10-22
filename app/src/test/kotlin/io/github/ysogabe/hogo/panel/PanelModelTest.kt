@@ -1,6 +1,7 @@
 package io.github.ysogabe.hogo.panel
 
 import java.time.LocalDate
+import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -338,5 +339,403 @@ class PanelModelTest {
         m.perform(MenuAction.Close, t0 + 2)
         assertFalse(m.menuOpen)
         assertFalse(m.isDone(filaria))
+    }
+
+    // ---- API モード ----
+
+    private val apiToday = LocalDate.of(2026, 10, 22)
+    private val tokyo = ZoneId.of("Asia/Tokyo")
+
+    private fun occ(key: String, series: String, name: String, date: LocalDate, icon: MedIcon = MedIcon.PILL) =
+        Occurrence(key, series, name, icon, date)
+
+    private fun loadedOf(
+        occurrences: List<Occurrence>,
+        status: SourceStatus = SourceStatus.OK,
+        leadDays: Int = 2,
+        zone: ZoneId? = tokyo,
+    ) = ScheduleResult.Loaded(status, leadDays, zone, 1792629000L, 15, occurrences)
+
+    private fun apiModel(): PanelModel = PanelModel(t0).also { it.enterApiMode(apiToday) }
+
+    private val late = occ("m-1021", "m", "長い薬", apiToday.minusDays(1))
+    private val todayOcc = occ("l-1022", "l", "フロントライン", apiToday, MedIcon.DROP)
+    private val soon = occ("f-1024", "f", "フィラリア", apiToday.plusDays(2))
+
+    @Test
+    fun apiModeStartsEmptyAndFetching() {
+        val m = apiModel()
+        assertTrue(m.apiMode)
+        assertEquals(ApiPhase.UNFETCHED, m.apiPhase)
+        assertNull(m.scenario)
+        assertEquals(apiToday, m.today)
+        assertTrue(m.warnings().isEmpty())
+        assertFalse(m.hasReminder())
+        assertTrue(m.clockBadges().isEmpty())
+        assertEquals("予定を取得中", m.statusText())
+        assertEquals(2L, m.leadDays)
+        assertNull(m.scheduleZone)
+        assertEquals(3, m.careCount)
+    }
+
+    @Test
+    fun scenarioModeHasNoStatusAndNoApiPhase() {
+        val m = PanelModel(t0)
+        assertFalse(m.apiMode)
+        assertNull(m.apiPhase)
+        assertNull(m.statusText())
+    }
+
+    @Test
+    fun loadedOkReplacesTheListAndUsesTheResponseValues() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(late, todayOcc, soon), leadDays = 3, zone = ZoneId.of("UTC")), apiToday)
+        assertEquals(ApiPhase.LOADED, m.apiPhase)
+        assertEquals(listOf("l-1022", "m-1021", "f-1024").sorted(), m.warnings().map { it.occurrence.key }.sorted())
+        assertNull(m.statusText())
+        assertEquals(3L, m.leadDays)
+        assertEquals(ZoneId.of("UTC"), m.scheduleZone)
+        m.applySchedule(loadedOf(listOf(soon)), apiToday)
+        assertEquals(listOf("f-1024"), m.warnings().map { it.occurrence.key })
+    }
+
+    @Test
+    fun loadedStaleFetchFailedAndReauthKeepWarningsAndShowTheirStatus() {
+        val expected = mapOf(
+            SourceStatus.STALE to "予定が古い",
+            SourceStatus.FETCH_FAILED to "予定を更新できません",
+            SourceStatus.REAUTH_REQUIRED to "カレンダーの再接続が必要",
+        )
+        for ((status, text) in expected) {
+            val m = apiModel()
+            m.applySchedule(loadedOf(listOf(todayOcc), status), apiToday)
+            assertEquals(status.name, listOf(Phase.TODAY), m.warnings().map { it.phase })
+            assertEquals(status.name, text, m.statusText())
+            assertEquals(tokyo, m.scheduleZone)
+        }
+    }
+
+    @Test
+    fun loadedNotConnectedEmptiesTheListAndUsesTheDeviceZone() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        m.applySchedule(loadedOf(listOf(todayOcc), SourceStatus.NOT_CONNECTED, leadDays = 5), apiToday)
+        assertTrue(m.warnings().isEmpty())
+        assertEquals("カレンダー未接続", m.statusText())
+        assertEquals(5L, m.leadDays)
+        assertNull(m.scheduleZone)
+    }
+
+    @Test
+    fun disabledEmptiesTheListAndShowsNothing() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(late, todayOcc), leadDays = 4), apiToday)
+        m.applySchedule(ScheduleResult.Disabled(60), apiToday)
+        assertEquals(ApiPhase.DISABLED, m.apiPhase)
+        assertTrue(m.warnings().isEmpty())
+        assertTrue(m.shownWarnings().isEmpty())
+        assertTrue(m.clockBadges().isEmpty())
+        assertNull(m.moreText())
+        assertFalse(m.hasReminder())
+        assertNull(m.statusText())
+        assertEquals(4L, m.leadDays) // そのまま
+        assertEquals(tokyo, m.scheduleZone)
+    }
+
+    @Test
+    fun disabledOnTheFirstResponseIsAlsoSilent() {
+        val m = apiModel()
+        m.applySchedule(ScheduleResult.Disabled(null), apiToday)
+        assertNull(m.statusText())
+        assertEquals(2L, m.leadDays)
+    }
+
+    @Test
+    fun failedAfterLoadedKeepsTheListLeadDaysAndZone() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(late, todayOcc), leadDays = 3), apiToday)
+        m.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday)
+        assertEquals(2, m.warnings().size)
+        assertEquals("予定を取得できません", m.statusText())
+        assertEquals(3L, m.leadDays)
+        assertEquals(tokyo, m.scheduleZone)
+        // 次の成功で消える。
+        m.applySchedule(loadedOf(listOf(late, todayOcc), leadDays = 3), apiToday)
+        assertNull(m.statusText())
+    }
+
+    @Test
+    fun failedBeforeAnyDataAndAfterDisabledStaysEmpty() {
+        val first = apiModel()
+        first.applySchedule(ScheduleResult.Failed(FetchError.TIMEOUT), apiToday)
+        assertTrue(first.warnings().isEmpty())
+        assertEquals("予定を取得できません", first.statusText())
+
+        val afterDisabled = apiModel()
+        afterDisabled.applySchedule(ScheduleResult.Disabled(null), apiToday)
+        afterDisabled.applySchedule(ScheduleResult.Failed(FetchError.INVALID), apiToday)
+        assertTrue(afterDisabled.warnings().isEmpty())
+        assertEquals("予定を取得できません", afterDisabled.statusText())
+    }
+
+    @Test
+    fun failedThenFetchFailedStatusShowsTheLatestState() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(todayOcc), SourceStatus.STALE), apiToday)
+        m.applySchedule(ScheduleResult.Failed(FetchError.HTTP_401), apiToday)
+        assertEquals("予定を取得できません", m.statusText())
+        m.applySchedule(loadedOf(listOf(todayOcc), SourceStatus.STALE), apiToday)
+        assertEquals("予定が古い", m.statusText())
+    }
+
+    @Test
+    fun configErrorShowsItsMessageHasNoDataAndIgnoresResults() {
+        val m = PanelModel(t0).also { it.enterApiMode(apiToday, configError = true) }
+        assertEquals(ApiPhase.CONFIG_ERROR, m.apiPhase)
+        assertEquals("接続設定を確認してください", m.statusText())
+        assertTrue(m.warnings().isEmpty())
+        assertEquals(2L, m.leadDays)
+        assertNull(m.scheduleZone)
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        m.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday)
+        assertTrue(m.warnings().isEmpty())
+        assertEquals("接続設定を確認してください", m.statusText())
+    }
+
+    @Test
+    fun scenarioModeIgnoresSchedules() {
+        val m = model(Scenario.TODAY)
+        m.applySchedule(loadedOf(emptyList()), apiToday)
+        assertEquals(2, m.warnings().size)
+        assertNull(m.apiPhase)
+        assertEquals(LocalDate.of(2026, 10, 20), m.today)
+    }
+
+    @Test
+    fun applyScheduleSetsTheTodayItWasGiven() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(soon)), apiToday.plusDays(2))
+        assertEquals(apiToday.plusDays(2), m.today)
+        assertEquals(listOf(Phase.TODAY), m.warnings().map { it.phase })
+    }
+
+    @Test
+    fun leadDaysFromTheResponseDecidesWhenTheWarningStarts() {
+        val far = occ("far", "far", "遠い薬", apiToday.plusDays(3))
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(far), leadDays = 2), apiToday)
+        assertTrue(m.warnings().isEmpty())
+        m.applySchedule(loadedOf(listOf(far), leadDays = 3), apiToday)
+        assertEquals(listOf(Phase.SOON), m.warnings().map { it.phase })
+        m.applySchedule(loadedOf(listOf(todayOcc), leadDays = 0), apiToday)
+        assertEquals(listOf(Phase.TODAY), m.warnings().map { it.phase })
+    }
+
+    @Test
+    fun leadDaysUsedIsTheDefaultUntilTheFirstSuccess() {
+        val far = occ("far", "far", "遠い薬", apiToday.plusDays(3))
+        val m = apiModel()
+        m.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday)
+        assertEquals(2L, m.leadDays)
+        m.applySchedule(loadedOf(listOf(far), leadDays = 3), apiToday)
+        m.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday)
+        assertEquals(3L, m.leadDays) // 失敗では戻さない
+        assertEquals(1, m.warnings().size)
+    }
+
+    // ---- API モード: 確認・実施済み ----
+
+    @Test
+    fun theConfirmationKeepsItsTitleIconAndRecordTargetWhenTheListIsReplaced() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        assertTrue(m.openMed("l-1022", t0))
+        assertEquals("フロントライン", m.confirmTitle())
+        assertEquals(MedIcon.DROP, m.confirmIcon())
+        // 件名と key が変わった一覧、さらに空の一覧に差し替わる。
+        m.applySchedule(loadedOf(listOf(occ("l-1022", "l", "名前が変わった", apiToday, MedIcon.PILL))), apiToday)
+        assertEquals("フロントライン", m.confirmTitle())
+        assertEquals(MedIcon.DROP, m.confirmIcon())
+        m.applySchedule(loadedOf(listOf(occ("other", "o", "別の薬", apiToday))), apiToday)
+        assertEquals("フロントライン", m.confirmTitle())
+        assertEquals(ConfirmResult.RECORDED, m.confirm(t0 + 500))
+        assertTrue(m.isDone("l-1022"))
+        assertFalse(m.isDone("other"))
+        assertEquals("フロントライン 記録しました", m.toast?.text)
+    }
+
+    @Test
+    fun anOpenConfirmationSurvivesDisabledAndFailedResults() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        m.openMed("l-1022", t0)
+        val opened = m.confirmation
+        m.applySchedule(ScheduleResult.Disabled(null), apiToday)
+        m.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday)
+        assertEquals(opened, m.confirmation)
+        assertEquals(ConfirmResult.RECORDED, m.confirm(t0 + 500))
+        assertTrue(m.isDone("l-1022"))
+    }
+
+    @Test
+    fun doneKeysSurviveReplacingTheList() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(todayOcc, soon)), apiToday)
+        m.openMed("l-1022", t0)
+        m.confirm(t0 + 500)
+        assertEquals(listOf("f-1024"), m.warnings().map { it.occurrence.key })
+        m.applySchedule(loadedOf(listOf(todayOcc, soon, late)), apiToday)
+        assertFalse(m.warnings().any { it.occurrence.key == "l-1022" })
+        // 一覧から消えても、また現れても済のまま。
+        m.applySchedule(loadedOf(listOf(soon)), apiToday)
+        m.applySchedule(ScheduleResult.Disabled(null), apiToday)
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        assertTrue(m.isDone("l-1022"))
+        assertTrue(m.warnings().isEmpty())
+    }
+
+    @Test
+    fun applyScheduleDoesNotTouchTheIdleTimeToastOrConfirmation() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        m.markInteraction(t0 + 1000)
+        m.openMed("l-1022", t0 + 2000)
+        val before = m.confirmation
+        m.applySchedule(loadedOf(listOf(late)), apiToday)
+        assertEquals(t0 + 1000, m.lastInteractionMs)
+        assertEquals(before, m.confirmation)
+        m.closeConfirmation()
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        m.openMed("l-1022", t0 + 3000)
+        m.confirm(t0 + 4000)
+        val toast = m.toast
+        m.applySchedule(loadedOf(listOf(late)), apiToday)
+        assertEquals(toast, m.toast)
+        assertEquals(t0 + 1000, m.lastInteractionMs)
+    }
+
+    @Test
+    fun undoStillRemovesTheRecordAfterTheListWasReplaced() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        m.openMed("l-1022", t0)
+        m.confirm(t0 + 500)
+        m.applySchedule(loadedOf(listOf(occ("x", "x", "別", apiToday))), apiToday)
+        assertTrue(m.undo(t0 + 1000))
+        assertFalse(m.isDone("l-1022"))
+    }
+
+    // ---- API モード: 日付の更新・シナリオの拒否 ----
+
+    @Test
+    fun refreshDateRejudgesWithTheLastLoadedListEvenAfterAFailure() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(soon)), apiToday.minusDays(1)) // 10-21: まだ 3 日前
+        assertTrue(m.warnings().isEmpty())
+        m.applySchedule(ScheduleResult.Failed(FetchError.NETWORK), apiToday.minusDays(1))
+        m.refreshDate(apiToday)
+        assertEquals(listOf(Phase.SOON), m.warnings().map { it.phase })
+        m.refreshDate(apiToday.plusDays(2))
+        assertEquals(listOf(Phase.TODAY), m.warnings().map { it.phase })
+        m.refreshDate(apiToday.plusDays(3))
+        assertEquals(listOf(Phase.LATE), m.warnings().map { it.phase })
+        assertEquals("予定を取得できません", m.statusText())
+    }
+
+    @Test
+    fun apiModeRefusesScenarioActionsAndTheMenu() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(todayOcc)), apiToday)
+        m.openMenu()
+        assertFalse(m.menuOpen)
+        m.perform(MenuAction.Pick(Scenario.SOON), t0)
+        m.perform(MenuAction.Reset, t0)
+        m.perform(MenuAction.Close, t0)
+        assertNull(m.scenario)
+        assertEquals(apiToday, m.today)
+        assertEquals(listOf("l-1022"), m.warnings().map { it.occurrence.key })
+    }
+
+    @Test
+    fun enteringApiModeDropsTheScenarioState() {
+        val m = model(Scenario.TODAY)
+        m.openMed(filaria, t0)
+        m.confirm(t0 + 500)
+        m.enterApiMode(apiToday)
+        assertNull(m.scenario)
+        assertNull(m.confirmation)
+        assertNull(m.toast)
+        assertFalse(m.isDone(filaria))
+        assertTrue(m.warnings().isEmpty())
+    }
+
+    // ---- 薬カードは最大 2 枚 ----
+
+    @Test
+    fun threeWarningsShowTwoCardsAndMoreOne() {
+        val m = apiModel()
+        // 並びは入力順と無関係: 未確認 → 今日 → そろそろ。
+        m.applySchedule(loadedOf(listOf(soon, todayOcc, late)), apiToday)
+        assertEquals(3, m.warnings().size)
+        assertEquals(listOf("m-1021", "l-1022"), m.shownWarnings().map { it.occurrence.key })
+        assertEquals(listOf(Phase.LATE, Phase.TODAY), m.shownWarnings().map { it.phase })
+        assertEquals(1, m.hiddenWarningCount())
+        assertEquals("ほか 1 件", m.moreText())
+        assertEquals(listOf("長い薬", "フロントライン", "ほか 1 件"), m.clockBadges())
+        assertTrue(m.hasReminder())
+    }
+
+    @Test
+    fun noMoreTextWithTwoOrFewerWarnings() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(todayOcc, soon)), apiToday)
+        assertEquals(2, m.shownWarnings().size)
+        assertEquals(0, m.hiddenWarningCount())
+        assertNull(m.moreText())
+        assertEquals(listOf("フロントライン", "フィラリア"), m.clockBadges())
+        m.applySchedule(loadedOf(emptyList()), apiToday)
+        assertNull(m.moreText())
+    }
+
+    @Test
+    fun moreCountGrowsWithManyWarningsAndSameStageIsOrderedByDate() {
+        val a = occ("a", "a", "A", apiToday)
+        val b = occ("b", "b", "B", apiToday.plusDays(1))
+        val c = occ("c", "c", "C", apiToday.plusDays(2))
+        val d = occ("d", "d", "D", apiToday.plusDays(2))
+        val e = occ("e", "e", "E", apiToday.plusDays(1))
+        val m = apiModel()
+        // 取得側（MedicationsJson）が日付・key の順に並べてから渡す。
+        m.applySchedule(loadedOf(listOf(a, b, e, c, d)), apiToday)
+        assertEquals(listOf("a", "b"), m.shownWarnings().map { it.occurrence.key })
+        assertEquals("ほか 3 件", m.moreText())
+        assertEquals(listOf("A", "B", "ほか 3 件"), m.clockBadges())
+    }
+
+    @Test
+    fun aHiddenWarningCannotBeOpenedButAShownOneCan() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(soon, todayOcc, late)), apiToday)
+        assertFalse(m.openMed("f-1024", t0))
+        assertNull(m.confirmation)
+        assertTrue(m.openMed("m-1021", t0))
+    }
+
+    @Test
+    fun recordingAShownCardBringsTheHiddenOneIn() {
+        val m = apiModel()
+        m.applySchedule(loadedOf(listOf(soon, todayOcc, late)), apiToday)
+        m.openMed("m-1021", t0)
+        m.confirm(t0 + 500)
+        assertEquals(listOf("l-1022", "f-1024"), m.shownWarnings().map { it.occurrence.key })
+        assertNull(m.moreText())
+    }
+
+    @Test
+    fun scenarioOrderIsUnchangedBySorting() {
+        // 同じ段階・同じ日付なら元の並び（系列の初出順）のまま。
+        assertEquals(listOf("フィラリア", "フロントライン"), model(Scenario.SOON).warnings().map { it.occurrence.name })
+        assertEquals(listOf("フィラリア", "フロントライン"), model(Scenario.LATE).clockBadges())
+        assertEquals(listOf(0, 0), listOf(model(Scenario.TODAY).hiddenWarningCount(), model(Scenario.SOON).hiddenWarningCount()))
     }
 }
