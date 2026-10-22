@@ -242,21 +242,127 @@ class ScheduleFetcherTest {
         assertTrue(executor.tasks.isEmpty())
     }
 
+    /** 作業用スレッドに渡され、まだ終わっていない作業の数（実際の通信が同時に動いている数）。 */
+    private fun assertSerial() = assertTrue("同時に ${executor.tasks.size} 件", executor.tasks.size <= 1)
+
     @Test
-    fun pauseWhileTheWorkerIsStillRunningThenResumeIgnoresTheOldResult() {
+    fun pauseWhileTheWorkerIsStillRunningThenResumeWaitsForItAndIgnoresItsResult() {
         val source = FakeSource(loaded(20), ScheduleResult.Disabled(60))
         val f = fetcher(source)
         f.resume()
         f.pause()
-        f.resume() // 新しい取得。古い作業はまだ終わっていない
-        assertEquals(2, executor.tasks.size)
+        f.resume() // 新しい取得の時刻だが、古い作業はまだ終わっていない
+        assertEquals(1, executor.tasks.size) // 2 件目は渡さない
+        assertEquals(2, source.cancels) // 止めたときと、待つときに接続を切る
         executor.runNext() // 古い作業（Loaded）が終わる
+        assertEquals(1, source.fetches)
         poster.runDue()
         assertTrue(delivered.isEmpty()) // 世代が違うので捨てる
+        assertEquals(1, executor.tasks.size) // 古い作業が終わったので、待っていた取得がすぐ始まる
+        assertEquals(listOf(15_000L), poster.pendingDelays()) // 見張りは待ちに入った時刻から
         executor.runNext() // 新しい作業
         poster.runDue()
         assertEquals(listOf<ScheduleResult>(ScheduleResult.Disabled(60)), delivered)
         assertEquals(listOf(60_000L), poster.pendingDelays())
+    }
+
+    @Test
+    fun repeatedPauseAndResumeNeverRunsTwoWorkersAtOnce() {
+        val source = FakeSource(loaded(20), loaded(21), loaded(22))
+        val f = fetcher(source)
+        f.resume()
+        assertSerial()
+        repeat(6) {
+            f.pause()
+            assertSerial()
+            f.resume()
+            assertSerial()
+        }
+        assertEquals(1, executor.tasks.size)
+        assertEquals(0, source.fetches) // どの作業もまだ終わっていない（通信は 1 件だけ止まっている）
+        executor.runNext()
+        poster.runDue()
+        assertTrue(delivered.isEmpty()) // 最初の作業の結果は捨てる
+        assertSerial()
+        assertEquals(1, executor.tasks.size)
+        executor.runNext()
+        poster.runDue()
+        assertEquals(listOf(loaded(21)), delivered) // 採用されるのは今の世代の作業だけ
+        assertEquals(2, source.fetches)
+        assertTrue(executor.tasks.isEmpty())
+    }
+
+    @Test
+    fun pauseAndResumeAfterTheWorkerEndedStartsAtOnce() {
+        val f = fetcher(FakeSource(loaded(20), loaded(21)))
+        f.resume()
+        completeFetch()
+        f.pause()
+        f.resume()
+        assertEquals(1, executor.tasks.size)
+        assertSerial()
+    }
+
+    @Test
+    fun theRetryAfterTheWatchdogWaitsForTheStuckWorker() {
+        val source = FakeSource(loaded(20), loaded(30))
+        val f = fetcher(source)
+        f.resume()
+        poster.advance(15_000) // 見張りが切る
+        assertEquals(listOf<ScheduleResult>(ScheduleResult.Failed(FetchError.TIMEOUT)), delivered)
+        assertSerial()
+        poster.advance(30_000) // 再試行の時刻。ただし作業は止まったまま
+        assertSerial()
+        assertEquals(1, executor.tasks.size)
+        assertEquals(1, delivered.size)
+        assertEquals(2, source.cancels) // 見張りと、待つとき
+        poster.advance(15_000) // 待っている間も見張りは動く
+        assertEquals(2, delivered.size)
+        assertEquals(ScheduleResult.Failed(FetchError.TIMEOUT), delivered[1])
+        poster.advance(30_000)
+        assertSerial()
+        assertEquals(2, delivered.size)
+        assertEquals(0, source.fetches)
+        executor.runNext() // 止まっていた作業がやっと終わる
+        poster.runDue()
+        assertEquals(2, delivered.size) // 古い結果は捨てる
+        assertSerial()
+        assertEquals(1, executor.tasks.size) // 待っていた取得が始まる
+        executor.runNext()
+        poster.runDue()
+        assertEquals(loaded(30), delivered.last())
+        assertEquals(3, delivered.size)
+        assertEquals(listOf(30_000L), poster.pendingDelays())
+    }
+
+    @Test
+    fun aStuckWorkerFinishingBeforeTheRetryLetsTheRetryStartAtItsOwnTime() {
+        val f = fetcher(FakeSource(loaded(20), loaded(30)))
+        f.resume()
+        poster.advance(15_000)
+        executor.runNext() // 切られた作業が終わる
+        poster.runDue()
+        assertEquals(1, delivered.size) // 結果は捨てる
+        assertTrue(executor.tasks.isEmpty())
+        poster.advance(29_999)
+        assertTrue(executor.tasks.isEmpty())
+        poster.advance(1)
+        assertEquals(1, executor.tasks.size)
+    }
+
+    @Test
+    fun aWorkerThatCouldNotBeStartedBecomesANetworkFailureAndFreesTheSlot() {
+        var attempts = 0
+        val f = ScheduleFetcher(FakeSource(), poster, { attempts++; throw java.util.concurrent.RejectedExecutionException() }) {
+            delivered += it
+        }
+        f.resume()
+        poster.runDue()
+        assertEquals(listOf<ScheduleResult>(ScheduleResult.Failed(FetchError.NETWORK)), delivered)
+        poster.advance(30_000) // 枠は空いているので、次の時刻にまた試す
+        poster.runDue()
+        assertEquals(2, attempts)
+        assertEquals(2, delivered.size)
     }
 
     @Test

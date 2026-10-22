@@ -52,8 +52,11 @@ class PanelController(
 
     private var pulseScheduled = false
 
-    /** 指が触れている間に届いた取得結果（最新の 1 件）。離してから反映する。 */
-    private var pendingResult: ScheduleResult? = null
+    /** 指が触れている間に届いた、最後の成功の応答（Loaded・Disabled）。離してから反映する。 */
+    private var pendingSuccess: ScheduleResult? = null
+
+    /** [pendingSuccess] より後に届いた直近の失敗。成功が後から届いたら捨てる。 */
+    private var pendingFailure: ScheduleResult.Failed? = null
 
     /** 当日・超過の薬カードを明滅させている間だけ true。 */
     val pulsing: Boolean get() = pulseScheduled
@@ -309,26 +312,35 @@ class PanelController(
     // ---- 取得結果と日付（API モード） ----
 
     /**
-     * 取得結果を受ける（メインスレッドで呼ぶ）。指が触れている間は最新の 1 件を保留し、全ての指が離れてから反映する。
-     * API モード以外では何もしない。
+     * 取得結果を受ける（メインスレッドで呼ぶ）。指が触れている間は、最後の成功の応答と、それより後の直近の失敗を
+     * 保留し、全ての指が離れてから成功、失敗の順に反映する（押していないときに同じ順で届いた場合と同じ状態になる。
+     * 失敗が成功の応答を消すことはない）。API モード以外では何もしない。
      */
     fun onSchedule(result: ScheduleResult) {
         if (!model.apiMode) return
-        pendingResult = result
+        when (result) {
+            is ScheduleResult.Failed -> pendingFailure = result
+            else -> {
+                pendingSuccess = result
+                pendingFailure = null // 後から届いた成功は、前の失敗を消す
+            }
+        }
         applyPending()
     }
 
     /**
-     * 保留中の取得結果を反映し、日付が変わっていれば判定し直す。指が触れている間は何もしない（離した後の
+     * 保留中の取得結果（成功、失敗の順）を反映し、日付が変わっていれば判定し直す。指が触れている間は何もしない（離した後の
      * [onUp]・[onCancel]、[resume] がもう一度呼ぶので、保留した日付の変化も失われない）。変わったときだけ
      * 明滅・時計の札・再描画を合わせる。無操作の時間・開いている確認・トーストには触れない（[PanelModel.applySchedule]）。
      */
     private fun applyPending() {
         if (!model.apiMode || gate.gestureActive) return
-        val result = pendingResult
-        pendingResult = null
+        val success = pendingSuccess
+        val failure = pendingFailure
+        pendingSuccess = null
+        pendingFailure = null
         var changed = false
-        if (result != null) {
+        for (result in listOfNotNull(success, failure)) {
             model.applySchedule(result, todayIn(model.scheduleZone))
             changed = true
         }

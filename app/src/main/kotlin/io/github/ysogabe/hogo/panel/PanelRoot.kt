@@ -13,6 +13,9 @@ import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import java.time.LocalDate
 import java.util.TimeZone
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * ホーム（[PanelView]）と既存の低輝度時計（[FlipClockView]）を重ね、タッチとタイマーを [PanelController] へ中継する。
@@ -59,7 +62,10 @@ class PanelRoot(
         ScheduleFetcher(
             source = HttpScheduleSource(valid.config),
             poster = HandlerPoster(Handler(Looper.getMainLooper())),
-            executor = { task -> Thread(task, "hogo-fetch").apply { isDaemon = true }.start() },
+            // 作業用スレッドは 1 本だけ（取得を直列に保つ。[ScheduleFetcher] も同時に 2 件を渡さない）。使わない間は終わる。
+            executor = ThreadPoolExecutor(
+                0, 1, 30L, TimeUnit.SECONDS, LinkedBlockingQueue(),
+            ) { task -> Thread(task, "hogo-fetch").apply { isDaemon = true } },
             onResult = ::onFetched,
         )
     }

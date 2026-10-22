@@ -477,6 +477,182 @@ class PanelControllerTest {
         assertFalse(controller.pulsing) // そろそろは明滅しない
     }
 
+    // ---- 押している間の保留: 成功の応答を失敗で失わない ----
+
+    /** 画面に出る状態（予定・警告・表示オフ・状態の行・時計の札・明滅）。 */
+    private data class Observed(
+        val warnings: List<String>,
+        val phases: List<Phase>,
+        val shown: List<String>,
+        val phase: ApiPhase?,
+        val sourceStatus: SourceStatus?,
+        val failed: Boolean,
+        val statusText: String?,
+        val badges: List<String>,
+        val pulsing: Boolean,
+        val today: LocalDate,
+    )
+
+    /** 独立したモデル・ホスト・コントローラー。押していないときの流れと比べるために 2 つ作る。 */
+    private inner class Rig {
+        var today: LocalDate = deviceToday
+        val model: PanelModel = PanelModel(now).also { it.enterApiMode(today) }
+        private val host = FakeHost { model.clockBadges() }
+        val controller = PanelController(model, host, { now }, { 1_700_000_000_000L }) { today }
+
+        init {
+            controller.resume()
+        }
+
+        fun observe() = Observed(
+            warnings = model.warnings().map { it.occurrence.name },
+            phases = model.warnings().map { it.phase },
+            shown = model.shownWarnings().map { it.occurrence.name },
+            phase = model.apiPhase,
+            sourceStatus = model.sourceStatus,
+            failed = model.lastFetchFailed,
+            statusText = model.statusText(),
+            badges = model.clockBadges(),
+            pulsing = controller.pulsing,
+            today = model.today,
+        )
+    }
+
+    /**
+     * 先に [prior] を受けた状態で、押している間に [arriving] が届き（途中で [dateJumpDays] 日進むこともある）、離した後の状態が、
+     * 押していないときに同じ順に届いた場合と同じになることを確かめる。押している間の表示は変わらないことも確かめる。
+     */
+    private fun assertHeldEqualsSequential(
+        prior: List<ScheduleResult>,
+        arriving: List<ScheduleResult>,
+        dateJumpDays: Long = 0,
+    ): Observed {
+        val sequential = Rig()
+        prior.forEach(sequential.controller::onSchedule)
+        arriving.forEach(sequential.controller::onSchedule)
+        if (dateJumpDays > 0) {
+            sequential.today = sequential.today.plusDays(dateJumpDays)
+            sequential.controller.onTimer(PanelTimer.DATE)
+        }
+        val held = Rig()
+        prior.forEach(held.controller::onSchedule)
+        val before = held.observe()
+        held.controller.onDown(headerSpot.first, headerSpot.second)
+        arriving.forEach(held.controller::onSchedule)
+        if (dateJumpDays > 0) {
+            held.today = held.today.plusDays(dateJumpDays)
+            held.controller.onTimer(PanelTimer.DATE)
+        }
+        assertEquals(before, held.observe()) // 押している間は何も変わらない
+        held.controller.onUp(headerSpot.first, headerSpot.second)
+        assertEquals(sequential.observe(), held.observe())
+        return held.observe()
+    }
+
+    @Test
+    fun aLoadedThenFailedWhileHeldKeepsTheScheduleAndShowsTheWarningOnRelease() {
+        val seen = assertHeldEqualsSequential(emptyList(), listOf(loaded(todayOcc), ScheduleResult.Failed(FetchError.TIMEOUT)))
+        assertEquals(listOf("フロントライン"), seen.warnings)
+        assertEquals(ApiPhase.LOADED, seen.phase)
+        assertTrue(seen.failed)
+        assertEquals(PanelModel.STATUS_FETCH_FAILED, seen.statusText)
+        assertTrue(seen.pulsing)
+    }
+
+    @Test
+    fun aLoadedThenFailedWhileHeldKeepsThePreviousScheduleAfterAnEarlierSuccess() {
+        val seen = assertHeldEqualsSequential(
+            listOf(loaded(soonOcc)),
+            listOf(loaded(todayOcc), ScheduleResult.Failed(FetchError.NETWORK), ScheduleResult.Failed(FetchError.HTTP_OTHER)),
+        )
+        assertEquals(listOf("フロントライン"), seen.warnings)
+        assertTrue(seen.failed)
+    }
+
+    @Test
+    fun aDisabledThenFailedWhileHeldKeepsTheDisplayOff() {
+        val seen = assertHeldEqualsSequential(
+            listOf(loaded(todayOcc)),
+            listOf(ScheduleResult.Disabled(null), ScheduleResult.Failed(FetchError.TIMEOUT)),
+        )
+        assertEquals(ApiPhase.DISABLED, seen.phase)
+        assertTrue(seen.warnings.isEmpty()) // 前の薬カードは残らない
+        assertTrue(seen.badges.isEmpty())
+        assertFalse(seen.pulsing)
+        assertTrue(seen.failed)
+    }
+
+    @Test
+    fun aNotConnectedThenFailedWhileHeldKeepsTheNotConnectedStatus() {
+        val seen = assertHeldEqualsSequential(
+            listOf(loaded(todayOcc)),
+            listOf(loaded(status = SourceStatus.NOT_CONNECTED), ScheduleResult.Failed(FetchError.NETWORK)),
+        )
+        assertEquals(SourceStatus.NOT_CONNECTED, seen.sourceStatus)
+        assertEquals(ApiPhase.LOADED, seen.phase)
+        assertTrue(seen.warnings.isEmpty())
+        assertTrue(seen.failed)
+    }
+
+    @Test
+    fun aFailedThenLoadedWhileHeldDropsTheFailure() {
+        val seen = assertHeldEqualsSequential(emptyList(), listOf(ScheduleResult.Failed(FetchError.NETWORK), loaded(todayOcc)))
+        assertFalse(seen.failed)
+        assertNull(seen.statusText)
+        assertEquals(listOf("フロントライン"), seen.warnings)
+    }
+
+    @Test
+    fun aFailedThenDisabledWhileHeldAlsoDropsTheFailure() {
+        val seen = assertHeldEqualsSequential(
+            listOf(loaded(todayOcc)),
+            listOf(ScheduleResult.Failed(FetchError.NETWORK), ScheduleResult.Disabled(null)),
+        )
+        assertEquals(ApiPhase.DISABLED, seen.phase)
+        assertFalse(seen.failed)
+    }
+
+    @Test
+    fun aLongRunOfMixedResultsWhileHeldEndsWhereTheSequentialFlowEnds() {
+        val failed = ScheduleResult.Failed(FetchError.NETWORK)
+        assertHeldEqualsSequential(
+            listOf(loaded(soonOcc)),
+            listOf(loaded(todayOcc), failed, loaded(soonOcc), failed, failed, ScheduleResult.Disabled(30), failed),
+        )
+        assertHeldEqualsSequential(
+            emptyList(),
+            listOf(failed, loaded(todayOcc), failed, loaded(soonOcc, todayOcc)),
+        )
+    }
+
+    @Test
+    fun aDateChangeOverlappingAHeldLoadedThenFailedStillAppliesBoth() {
+        val seen = assertHeldEqualsSequential(
+            emptyList(),
+            listOf(loaded(soonOcc), ScheduleResult.Failed(FetchError.TIMEOUT)),
+            dateJumpDays = 2,
+        )
+        assertEquals(listOf(Phase.TODAY), seen.phases)
+        assertTrue(seen.failed)
+        assertEquals(deviceToday.plusDays(2), seen.today)
+        assertEquals(listOf("フィラリア"), seen.warnings)
+        assertTrue(seen.pulsing) // 今日になったので明滅する
+    }
+
+    @Test
+    fun aHeldFailureAloneIsAppliedOnTheReleaseAndAHeldSuccessLaterClearsIt() {
+        apiMode()
+        holdFinger()
+        controller.onSchedule(ScheduleResult.Failed(FetchError.NETWORK))
+        assertEquals("予定を取得中", model.statusText()) // 押している間は変えない
+        releaseFinger()
+        assertEquals(PanelModel.STATUS_FETCH_FAILED, model.statusText())
+        holdFinger()
+        controller.onSchedule(loaded(todayOcc))
+        releaseFinger()
+        assertNull(model.statusText())
+    }
+
     @Test
     fun aHeldResultIsAppliedWhenTheGestureIsCancelled() {
         apiMode()

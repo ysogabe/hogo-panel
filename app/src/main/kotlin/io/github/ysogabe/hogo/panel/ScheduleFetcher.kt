@@ -15,8 +15,10 @@ interface MainPoster {
  * 予定の取得の予約。取得は [executor]（作業用スレッド）で行い、結果は [poster]（メインスレッド）で [onResult] に渡す。
  * メインスレッドの外から触ってよいのは [ScheduleSource.fetch] だけで、状態はすべてメインスレッドで扱う。
  *
- * - 取得は同時に 1 件。前の取得が終わって（または見張りが切って）から次を予約する。
- * - 取得を始めるたびに [WATCHDOG_MS] の見張りを予約し、時間が来たら世代番号を進め、接続を切り、`Failed(TIMEOUT)` を渡す。
+ * - 作業は直列で、実行中の作業は常に 1 件以下。作業が実際に終わったか（[workerBusy]）は、結果を採用する世代とは別に、
+ *   作業が終わったときにメインスレッドへ戻す知らせで数える。古い作業が残っている間に次の取得の時刻が来たら、
+ *   接続を切って（[ScheduleSource.cancel]）終わりを待ち、終わった時点で始める。古い作業の結果は世代が違うので捨てる。
+ * - 取得を始める（待ちに入る）たびに [WATCHDOG_MS] の見張りを予約し、時間が来たら世代番号を進め、接続を切り、`Failed(TIMEOUT)` を渡す。
  * - [pause] で世代番号を進めて予約を消す。止めた後に届いた結果は捨て、止めている間は予約しない。
  * - 次までの間隔は、成功（`Loaded`・`Disabled`）なら応答の `pollSeconds`（無ければ [SUCCESS_DEFAULT_SECONDS]）、
  *   失敗なら最後に分かった `pollSeconds`（無ければ [FAILURE_DEFAULT_SECONDS]）。どちらも 10〜3600 秒に収める。
@@ -28,7 +30,15 @@ class ScheduleFetcher(
     private val onResult: (ScheduleResult) -> Unit,
 ) {
     private var running = false
+
+    /** 今の世代の取得を待っている間（待ちに入ってから、結果の採用・見張り・停止まで）。 */
     private var inFlight = false
+
+    /** 作業を [executor] に渡してから、終わった知らせがメインスレッドに届くまで。古い世代の作業も含む。 */
+    private var workerBusy = false
+
+    /** 今の世代の取得は待ちに入ったが、古い作業が残っていてまだ作業を渡していない。 */
+    private var queued = false
     private var generation = 0
 
     /** 最後に分かった `pollSeconds`（収めた後の値）。成功の応答に付いていたときだけ更新する。 */
@@ -44,12 +54,13 @@ class ScheduleFetcher(
         startFetch()
     }
 
-    /** 予約・見張りを消し、作業中の取得は接続を切って結果を捨てる。 */
+    /** 予約・見張りを消し、作業中の取得は接続を切って結果を捨てる。作業が終わるまで次の作業は始めない。 */
     fun pause() {
         if (!running && !inFlight) return
         running = false
         generation++
         inFlight = false
+        queued = false
         poster.removeCallbacks(next)
         poster.removeCallbacks(watchdog)
         source.cancel()
@@ -58,20 +69,42 @@ class ScheduleFetcher(
     private fun startFetch() {
         if (!running || inFlight) return
         inFlight = true
-        val gen = generation
         poster.postDelayed(watchdog, WATCHDOG_MS)
-        executor.execute {
-            val result = try {
-                source.fetch()
-            } catch (_: Throwable) {
-                ScheduleResult.Failed(FetchError.NETWORK)
-            }
-            poster.post { complete(gen, result) }
+        if (workerBusy) {
+            queued = true // 古い作業が終わるのを待つ（終わったら [onWorkerDone] が始める）
+            source.cancel()
+        } else {
+            launch()
         }
     }
 
-    private fun complete(gen: Int, result: ScheduleResult) {
-        if (gen != generation || !running) return // 止めた後・見張りで切った後の結果は捨てる
+    private fun launch() {
+        queued = false
+        workerBusy = true
+        val gen = generation
+        try {
+            executor.execute {
+                val result = try {
+                    source.fetch()
+                } catch (_: Throwable) {
+                    ScheduleResult.Failed(FetchError.NETWORK)
+                }
+                poster.post { onWorkerDone(gen, result) }
+            }
+        } catch (_: Throwable) {
+            // 作業を始められなかったときも、終わった知らせと同じ道を通す（実行枠を塞がない）。
+            poster.post { onWorkerDone(gen, ScheduleResult.Failed(FetchError.NETWORK)) }
+        }
+    }
+
+    /** 作業が終わった（メインスレッド）。実行枠を空け、今の世代の結果なら採用し、待っていた取得があれば始める。 */
+    private fun onWorkerDone(gen: Int, result: ScheduleResult) {
+        workerBusy = false
+        if (queued) {
+            if (running && inFlight) launch() // 終わったのは古い作業。その結果は捨てる
+            return
+        }
+        if (gen != generation || !running || !inFlight) return // 止めた後・見張りで切った後の結果は捨てる
         inFlight = false
         poster.removeCallbacks(watchdog)
         deliver(result)
@@ -81,6 +114,7 @@ class ScheduleFetcher(
         if (!running || !inFlight) return
         generation++ // 作業中の取得の結果を捨てる
         inFlight = false
+        queued = false
         source.cancel()
         deliver(ScheduleResult.Failed(FetchError.TIMEOUT))
     }

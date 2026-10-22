@@ -8,6 +8,7 @@ import java.net.URLEncoder
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * `GET {baseUrl}/api/agent/{deviceId}/medications` で投薬予定を取る。必ず作業用スレッドから呼ぶ（待つ）。
@@ -21,8 +22,8 @@ class HttpScheduleSource(
     /** 応答の `timeZone`（無ければ null）での今日。回の日付の範囲の判定に使う。 */
     private val todayFor: (ZoneId?) -> LocalDate = { zone -> LocalDate.now(zone ?: ZoneId.systemDefault()) },
 ) : ScheduleSource {
-    @Volatile
-    private var active: HttpURLConnection? = null
+    /** 取得中の接続。更新・解除は作業用スレッド、読み出しは [cancel] を呼ぶスレッド。比較しての解除は原子的に行う。 */
+    private val active = AtomicReference<HttpURLConnection?>(null)
 
     override fun fetch(): ScheduleResult = try {
         doFetch()
@@ -37,7 +38,7 @@ class HttpScheduleSource(
      * （StrictMode のネットワーク操作の検出に当たりうる）は別のスレッドで行い、すぐ戻る。
      */
     override fun cancel() {
-        val conn = active ?: return
+        val conn = active.get() ?: return
         Thread {
             try {
                 conn.disconnect()
@@ -51,7 +52,7 @@ class HttpScheduleSource(
         val url = URL("${config.baseUrl}/api/agent/${URLEncoder.encode(config.deviceId, "UTF-8")}/medications")
         // システムのプロキシに秘密を渡さない。
         val conn = url.openConnection(Proxy.NO_PROXY) as HttpURLConnection
-        active = conn
+        active.set(conn)
         try {
             conn.requestMethod = "GET"
             conn.instanceFollowRedirects = false
@@ -71,8 +72,8 @@ class HttpScheduleSource(
             val body = readLimited(conn) ?: return ScheduleResult.Failed(FetchError.TOO_LARGE)
             return MedicationsJson.parse(body, todayFor)
         } finally {
-            // 見張りで切られた古い取得が、次の取得の接続の参照を消さないよう、自分の接続のときだけ外す。
-            if (active === conn) active = null
+            // 自分の接続のときだけ外す（別の取得が差し替えていたら消さない）。
+            active.compareAndSet(conn, null)
             conn.disconnect()
         }
     }
