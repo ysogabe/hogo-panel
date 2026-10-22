@@ -19,6 +19,32 @@ Hogo Panel（applicationId `io.github.ysogabe.hogo.panel`）のビルドと導�
 - debug APK は `app/build/outputs/apk/debug/app-debug.apk` に出力されます。APK とビルド出力はコミットしません。
 - lint は警告のみで失敗しません（ランチャーアイコン未設定など）。操作モックの追加後もエラー0件で、警告は既存の3件（アイコン未設定、Android 12以降のバックアップ設定、向き固定）です。
 
+## release APK の検査（通信を持たないことの確認）
+
+投薬予定の取得（API モード）に使う `INTERNET` 権限と、127.0.0.1 だけに平文を許す network security config は `app/src/debug` にだけ置きます。release の APK にそれらが入っていないことを、ビルドのたびに確かめます。
+
+```sh
+./gradlew assembleRelease     # 署名設定は無いので app-release-unsigned.apk ができる（導入はしない。検査だけ）
+APK=app/build/outputs/apk/release/app-release-unsigned.apk
+
+# aapt2（build-tools）で、権限と属性がマニフェストに無いこと
+aapt2 dump permissions "$APK"                                          # package: の行だけで、uses-permission が出ない
+aapt2 dump xmltree --file AndroidManifest.xml "$APK" \
+  | grep -n "uses-permission\|networkSecurityConfig\|usesCleartextTraffic"   # 何も出ない（grep は終了コード 1）
+aapt2 dump resources "$APK" | grep -i "xml/\|network"                  # 何も出ない（network_security_config が無い）
+
+# apkanalyzer（cmdline-tools）でも同じ
+apkanalyzer manifest print "$APK" | grep -n "uses-permission\|networkSecurityConfig\|usesCleartextTraffic"   # 何も出ない
+```
+
+- 比べるときは `app/build/outputs/apk/debug/app-debug.apk` に同じコマンドを実行します。debug だけに `android.permission.INTERNET` と `networkSecurityConfig`（`res/xml/network_security_config.xml`）が出ます。
+- debug の network security config は、`127.0.0.1`（`includeSubdomains="false"`）だけに平文の HTTP を許し、それ以外は既定（禁止）です。`aapt2 dump xmltree --file res/xml/network_security_config.xml app/build/outputs/apk/debug/app-debug.apk` で中身を確かめられます。
+- release には通信の許可が無いので、接続設定ファイルがあっても取得は `NETWORK` の失敗になるはずです（release は `run-as` も使えないので、設定を置く経路自体がありません）。ここは仕組みからの推論で、実機では確かめていません。
+
+## API モード（debug だけ）
+
+アプリのデータ領域に接続設定（`files/api-config.json`）があるときだけ、パネルは 127.0.0.1 の Mock API から投薬予定を取ります（API モード）。無ければ今までのシナリオ選択の操作モックのままです。設定は `tools/mock-hogo-meter/push-config.sh` が `adb shell run-as` で置き、`am force-stop` の後に起動し直して反映します。手順・形式・安全面は [docs/calendar-mock/design.md](calendar-mock/design.md) と `tools/mock-hogo-meter/README.md` を参照してください。API モードではシナリオ選択（ヘッダーの長押し）は使えません。
+
 ## 端末への導入
 
 ```sh

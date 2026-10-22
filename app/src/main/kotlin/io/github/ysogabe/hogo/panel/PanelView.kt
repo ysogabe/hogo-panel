@@ -55,6 +55,10 @@ class PanelView(
         drawIcon(c, Icon.CAT, Box(26f, 24f, 28f, 28f), HEADER_ICON, 1.8f)
         drawText(c, "こむぎ", 66f, 38f, 25f, HEADER_NAME, bold = true)
         drawText(c, localTimeText(), 852f, 38f, 26f, HEADER_TIME, Paint.Align.RIGHT)
+        // API モードの状態（時計には出さない）。時刻の左に、名前との間へ収まるよう末尾を「…」で切る。
+        model.statusText()?.let {
+            drawText(c, it, STATUS_RIGHT, 38f, 22f, STATUS_TEXT, Paint.Align.RIGHT, maxWidth = STATUS_RIGHT - STATUS_LEFT, ellipsize = true)
+        }
         val button = PanelLayout.clockButton
         if (controller.pressed == Hit.ClockButton) {
             fill.color = PRESS
@@ -360,6 +364,11 @@ class PanelView(
         const val HEADER_NAME = 0xFFC9D0C3.toInt()
         const val HEADER_TIME = 0xFFA9B1A2.toInt()
         const val HEADER_BUTTON = 0xFF949F8B.toInt()
+
+        /** 状態の行（ヘッダーの右、時刻の左）。名前「こむぎ」の右端から時刻の左端の手前まで。 */
+        const val STATUS_TEXT = 0xFFC0614A.toInt()
+        const val STATUS_RIGHT = 752f
+        const val STATUS_LEFT = 190f
         const val CARE_FILL = 0xFF212A23.toInt()
         const val CARE_BORDER = 0xFF354034.toInt()
         const val CARE_TEXT = 0xFFD2DDCB.toInt()

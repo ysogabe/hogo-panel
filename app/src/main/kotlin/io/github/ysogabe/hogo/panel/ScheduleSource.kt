@@ -33,4 +33,7 @@ sealed interface ScheduleResult {
 /** 予定の取得元。呼び出し元のスレッドで待つので、メインスレッドから呼ばない。例外は投げず [ScheduleResult.Failed] にする。 */
 fun interface ScheduleSource {
     fun fetch(): ScheduleResult
+
+    /** 待っている [fetch] を、別のスレッドから早く終わらせる（接続を切る）。結果は使われない。何もしなくてよい取得元は既定のまま。 */
+    fun cancel() {}
 }

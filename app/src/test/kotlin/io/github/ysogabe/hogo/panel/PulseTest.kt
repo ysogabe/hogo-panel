@@ -13,6 +13,7 @@ class PulseTest {
         override fun schedule(timer: PanelTimer, delayMs: Long) { timers[timer] = delayMs }
         override fun cancel(timer: PanelTimer) { timers.remove(timer) }
         override fun onClockChanged(clockOn: Boolean) {}
+        override fun updateClockBadges() {}
     }
 
     private var now = 10_000L

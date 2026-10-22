@@ -1,6 +1,9 @@
 package io.github.ysogabe.hogo.panel
 
-enum class PanelTimer { UNLOCK, TOAST, IDLE, LONG_PRESS, TICK, PULSE }
+import java.time.LocalDate
+import java.time.ZoneId
+
+enum class PanelTimer { UNLOCK, TOAST, IDLE, LONG_PRESS, TICK, PULSE, DATE }
 
 enum class PanelKey { NEXT, PREVIOUS, ACTIVATE, ESCAPE, OTHER }
 
@@ -15,6 +18,9 @@ interface PanelHost {
 
     /** 時計（低輝度）とホーム（system の明るさ）の切替。 */
     fun onClockChanged(clockOn: Boolean)
+
+    /** 時計の札を [PanelModel.clockBadges] に合わせる（時計の表示中に予定や日付が変わったとき）。 */
+    fun updateClockBadges()
 }
 
 /**
@@ -26,6 +32,8 @@ class PanelController(
     private val host: PanelHost,
     private val nowMs: () -> Long,
     private val localMillis: () -> Long,
+    /** 予定のゾーン（無ければ端末のゾーン）での今日。API モードの日付の判定に使う。 */
+    private val todayIn: (ZoneId?) -> LocalDate = { zone -> LocalDate.now(zone ?: ZoneId.systemDefault()) },
 ) {
     private val gate = TouchGate()
     private var press: Hit? = null
@@ -44,6 +52,9 @@ class PanelController(
 
     private var pulseScheduled = false
 
+    /** 指が触れている間に届いた取得結果（最新の 1 件）。離してから反映する。 */
+    private var pendingResult: ScheduleResult? = null
+
     /** 当日・超過の薬カードを明滅させている間だけ true。 */
     val pulsing: Boolean get() = pulseScheduled
 
@@ -59,6 +70,8 @@ class PanelController(
         host.onClockChanged(false)
         syncTimers(now)
         scheduleIdle(now)
+        scheduleDate()
+        applyPending() // 止めている間に日付が変わっていたら、すぐ判定し直す
         host.requestRedraw()
     }
 
@@ -96,7 +109,8 @@ class PanelController(
         downX = x
         downY = y
         press = PanelHits.at(model, x, y, now)
-        if (press == Hit.HeaderHold) host.schedule(PanelTimer.LONG_PRESS, HOLD_MS)
+        // API モードにはシナリオ選択が無いので、長押しは何もしない。
+        if (press == Hit.HeaderHold && !model.apiMode) host.schedule(PanelTimer.LONG_PRESS, HOLD_MS)
         scheduleIdle(now)
         host.requestRedraw()
     }
@@ -134,6 +148,7 @@ class PanelController(
             model.markInteraction(now)
             scheduleIdle(now)
         }
+        applyPending()
         host.requestRedraw()
     }
 
@@ -147,6 +162,7 @@ class PanelController(
             model.markInteraction(now)
             scheduleIdle(now)
         }
+        applyPending()
         host.requestRedraw()
     }
 
@@ -243,7 +259,7 @@ class PanelController(
                 if (model.idleDue(now)) enterClock() else scheduleIdle(now)
             }
             PanelTimer.LONG_PRESS -> {
-                if (press == Hit.HeaderHold && !gate.isConsumed && gate.activePointers == 1 && model.screen == Screen.HOME) {
+                if (!model.apiMode && press == Hit.HeaderHold && !gate.isConsumed && gate.activePointers == 1 && model.screen == Screen.HOME) {
                     press = null
                     gate.consume()
                     model.openMenu()
@@ -256,6 +272,11 @@ class PanelController(
                 if (model.screen == Screen.HOME) {
                     host.schedule(PanelTimer.TICK, ClockMath.untilNextMinuteMs(localMillis()) + ClockMath.BOUNDARY_MARGIN_MS)
                 }
+            }
+            PanelTimer.DATE -> {
+                if (!model.apiMode) return
+                scheduleDate()
+                applyPending()
             }
             PanelTimer.PULSE -> {
                 // 条件を外れていたら再予約しない（停止後にコールバックが残っても動き続けない）。
@@ -285,6 +306,49 @@ class PanelController(
         }
     }
 
+    // ---- 取得結果と日付（API モード） ----
+
+    /**
+     * 取得結果を受ける（メインスレッドで呼ぶ）。指が触れている間は最新の 1 件を保留し、全ての指が離れてから反映する。
+     * API モード以外では何もしない。
+     */
+    fun onSchedule(result: ScheduleResult) {
+        if (!model.apiMode) return
+        pendingResult = result
+        applyPending()
+    }
+
+    /**
+     * 保留中の取得結果を反映し、日付が変わっていれば判定し直す。指が触れている間は何もしない（離した後の
+     * [onUp]・[onCancel]、[resume] がもう一度呼ぶので、保留した日付の変化も失われない）。変わったときだけ
+     * 明滅・時計の札・再描画を合わせる。無操作の時間・開いている確認・トーストには触れない（[PanelModel.applySchedule]）。
+     */
+    private fun applyPending() {
+        if (!model.apiMode || gate.gestureActive) return
+        val result = pendingResult
+        pendingResult = null
+        var changed = false
+        if (result != null) {
+            model.applySchedule(result, todayIn(model.scheduleZone))
+            changed = true
+        }
+        // 応答でゾーンが変わったときも含め、今のゾーンの今日に合わせる。
+        val today = todayIn(model.scheduleZone)
+        if (today != model.today) {
+            model.refreshDate(today)
+            changed = true
+        }
+        if (!changed) return
+        syncTimers(nowMs())
+        host.updateClockBadges()
+        host.requestRedraw()
+    }
+
+    private fun scheduleDate() {
+        if (!model.apiMode) return
+        host.schedule(PanelTimer.DATE, ClockMath.untilNextMinuteMs(localMillis()) + ClockMath.BOUNDARY_MARGIN_MS)
+    }
+
     // ---- 内部 ----
 
     private fun enterClock() {
@@ -295,6 +359,7 @@ class PanelController(
     private fun enterClockUi() {
         cancelAll()
         press = null
+        scheduleDate() // 時計の間も日付は確かめる
         host.onClockChanged(true)
         host.requestRedraw()
     }

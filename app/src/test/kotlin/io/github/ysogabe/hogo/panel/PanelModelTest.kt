@@ -699,17 +699,26 @@ class PanelModelTest {
 
     @Test
     fun moreCountGrowsWithManyWarningsAndSameStageIsOrderedByDate() {
-        val a = occ("a", "a", "A", apiToday)
+        // 入力は日付順（取得側が日付・key の順に並べて渡す）。ところが系列の初出順（A, B, C, D）と、
+        // 系列ごとの「現在の回」の日付順（B, A, C, D）は食い違う: A は古い回 a-old が先に出るが、現在の回 a-cur は B の b より後。
+        val aOld = occ("a-old", "a", "A古", apiToday.minusDays(1))
         val b = occ("b", "b", "B", apiToday.plusDays(1))
+        val aCur = occ("a-cur", "a", "A", apiToday.plusDays(2))
         val c = occ("c", "c", "C", apiToday.plusDays(2))
         val d = occ("d", "d", "D", apiToday.plusDays(2))
-        val e = occ("e", "e", "E", apiToday.plusDays(1))
         val m = apiModel()
-        // 取得側（MedicationsJson）が日付・key の順に並べてから渡す。
-        m.applySchedule(loadedOf(listOf(a, b, e, c, d)), apiToday)
-        assertEquals(listOf("a", "b"), m.shownWarnings().map { it.occurrence.key })
-        assertEquals("ほか 3 件", m.moreText())
-        assertEquals(listOf("A", "B", "ほか 3 件"), m.clockBadges())
+        m.applySchedule(loadedOf(listOf(aOld, b, aCur, c, d)), apiToday)
+        // ReminderPolicy は系列の初出順（A, B, C, D）で返す。日付の並べ替えを消すと A が B より先に来る。
+        assertEquals(
+            listOf("a", "b", "c", "d"),
+            ReminderPolicy.warnings(listOf(aOld, b, aCur, c, d), emptySet(), apiToday, 2L).map { it.occurrence.seriesId },
+        )
+        // 同じ段階（そろそろ）の中で、現在の回の予定日の順。同じ日（A・C・D）は系列の初出順。
+        assertEquals(listOf("b", "a-cur", "c", "d"), m.warnings().map { it.occurrence.key })
+        assertEquals(List(4) { Phase.SOON }, m.warnings().map { it.phase })
+        assertEquals(listOf("b", "a-cur"), m.shownWarnings().map { it.occurrence.key })
+        assertEquals("ほか 2 件", m.moreText())
+        assertEquals(listOf("B", "A", "ほか 2 件"), m.clockBadges())
     }
 
     @Test
