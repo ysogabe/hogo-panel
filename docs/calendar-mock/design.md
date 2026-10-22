@@ -173,7 +173,7 @@ sealed interface ScheduleResult {
 
 ```
 adb -s <serial> reverse tcp:8787 tcp:8787
-tools/mock-hogo-meter/push-config.sh <serial>   # 中で次を行う
+tools/mock-hogo-meter/push-config.sh <serial> <設定ファイル>   # 中で次を行う
 #   adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel sh -c 'umask 077; mkdir -p files && cat > files/api-config.json.tmp && mv files/api-config.json.tmp files/api-config.json'" < <設定ファイル>
 #   adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel ls -l files/"   # 中身は表示しない
 adb -s <serial> shell am force-stop io.github.ysogabe.hogo.panel
