@@ -82,16 +82,16 @@ API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見�
 
 要求ヘッダー: `X-Mock-Device-Secret`（Mock API が起動ごとに作る評価用の値。本番のヘッダー名・認証方式は hogo-meter 側で決める）。
 
-成功 `200`、`Content-Type: application/json; charset=utf-8`、UTF-8 のバイト長の `Content-Length`。キーの規則: 知らないキーは無視する。`null` は省略と同じに扱う。数値は整数だけ（小数・文字列の数字は型違い）。
+成功 `200`、`Content-Type: application/json; charset=utf-8`、UTF-8 のバイト長の `Content-Length`。キーの規則: 知らないキーは無視する。`null` は省略と同じに扱う。数値は整数だけ（JSON の数値で小数点も指数も無いものが整数。`2.0`・`1e2`・文字列の数字は型違い）。同じオブジェクトに同じキーを 2 回出さない（出たら全体の失敗）。送り手は応答を 64 KiB 以内に収める（Mock は `ensure_ascii=False` の UTF-8 で書き出す。件数・長さの上限を全部使うと超えうるのは送り手の責任）。入れ子の深さはトップの `{}` / `[]` を 1 と数えて 8 まで。
 
 | キー | 型 | 意味 | 省略 |
 |---|---|---|---|
 | `enabled` | boolean | この機器に投薬予定を出すか（デバイス詳細の設定） | 省略しない |
 | `status` | string | 下の表。知らない値は `fetchFailed` と同じに扱う | `enabled:false` のとき省く |
-| `leadDays` | integer | 警告を始める日数（世帯の設定値。初期値 2、0〜14） | `enabled:false` のとき省く |
-| `timeZone` | string | 予定のタイムゾーン（IANA 名。選んだカレンダーのもの） | `notConnected` と `enabled:false` のとき省く |
-| `fetchedAt` | integer | 最後に Google から取れた時刻（epoch 秒） | 一度も取れていないとき省く |
-| `pollSeconds` | integer | 次の取得までの推奨間隔（秒）。パネルは 10〜3600 に収めて使う | 省いてよい（パネルは 300 秒） |
+| `leadDays` | integer | 警告を始める日数（世帯の設定値。初期値 2、0〜14。32 ビット符号付きの範囲外は型違い） | `enabled:false` のとき省く |
+| `timeZone` | string | 予定のタイムゾーン。地域の ID（`Area/City` の形。例 `Asia/Tokyo`）と `UTC` だけ。`+09:00`・`UTC+9`・`Z` などのオフセット形式は全体の失敗。選んだカレンダーのもの | `notConnected` と `enabled:false` のとき省く。`enabled:true` で無いとき、パネルは端末のタイムゾーンで今日を決める（失敗にしない） |
+| `fetchedAt` | integer | 最後に Google から取れた時刻（epoch 秒。0〜2^53−1） | 一度も取れていないとき省く |
+| `pollSeconds` | integer | 次の取得までの推奨間隔（秒。32 ビット符号付きの範囲）。パネルは 10〜3600 に収めて使う | 省いてよい（パネルは 300 秒） |
 | `occurrences` | array | 回の一覧（予定日の昇順、最大 200 件）。`notConnected` では空 | `enabled:false` のとき省く |
 
 `occurrences[]`:
@@ -100,11 +100,11 @@ API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見�
 |---|---|---|
 | `key` | string | 回の識別子（occurrenceKey）。実施の記録先。1〜128 文字の `[A-Za-z0-9._:-]` |
 | `seriesId` | string | 系列（繰り返し予定の元）。単発の予定は `key` と同じ値。`key` と同じ文字の規則 |
-| `name` | string | 薬名（予定の件名）。サーバーが前後の空白と制御文字を除き、40 文字までに切って渡す。1〜40 文字 |
-| `date` | string | 予定日 `YYYY-MM-DD`（`timeZone` での暦日。単日の終日予定を対象とする） |
-| `icon` | string | `pill` / `drop`。省略時と知らない値は `pill`。決め方は未決（PRD） |
+| `name` | string | 薬名（予定の件名）。1〜40 コードポイント（Unicode。UTF-16 の単位ではない）。送り手（Mock・本番）は前後の空白と一般カテゴリ Cc・Cf の文字を除き、40 コードポイントまでに切って渡す。パネルは整形しない（trim しない） |
+| `date` | string | 予定日（`timeZone` での暦日。単日の終日予定を対象とする）。`[0-9]{4}-[0-9]{2}-[0-9]{2}` に文字列全体が一致し（Python は `re.fullmatch`、Kotlin は `matches()`）、実在する日付 |
+| `icon` | string | `pill` / `drop`。省略時・知らない値・文字列でない値は `pill`。決め方は未決（PRD） |
 
-`key` の不変条件: 同じ回なら、再取得・件名の変更・予定日の移動・系列の一部の回だけの変更をしても変わらない（Google の回の ID が元の開始日から作られることを前提にする。本番の作り方は hogo-meter で確かめる）。別のカレンダーの同名の予定とは別の key になる。カレンダー ID をそのまま入れない（本番ではハッシュなどで伏せる）。Mock の key は `occ-<カレンダー>-<系列>-<元の予定日>`（例 `occ-cal1-F-20261024`）の架空の値で、カレンダーを切り替えると別の key になる。
+`key` の不変条件: 同じ回なら、再取得・件名の変更・予定日の移動・系列の一部の回だけの変更をしても変わらない（Google の回の ID が元の開始日から作られることを前提にする。本番の作り方は hogo-meter で確かめる）。別のカレンダーの同名の予定とは別の key になる。カレンダー ID をそのまま入れない（本番ではハッシュなどで伏せる）。Mock の ID は架空の値で、`key` は `occ-<カレンダー>-<系列>-<元の予定日 YYYYMMDD>`（例 `occ-cal1-F-20261024`）、`seriesId` は `ser-<カレンダー>-<系列>`（例 `ser-cal1-F`）。`<カレンダー>` は Mock の calendarId から作る（`mock-` を外してハイフンを除く。`mock-cal-1` → `cal1`、`mock-cal-2` → `cal2`）ので、カレンダーを切り替えると別の key になる。単発の予定も同じ形でカレンダーを含める（`occ-cal1-once-20261030`、系列は `once`。単発の `seriesId` は `key` と同じ値）。
 
 `date` だけ epoch 秒にしない理由: 終日の予定は時刻を持たない暦日で、epoch 秒にするとタイムゾーンの解釈がずれる余地が増える。複数日の予定・時刻付きの予定は、サーバーが開始日の単日の予定として渡す。
 
@@ -122,13 +122,15 @@ API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見�
 
 「古い」とみなす時間はサーバーが決める（Mock は評価用の切り替えで直接選ぶ）。
 
-エラー: `401 {"error":"unauthorized"}`、`404 {"error":"device not found"}`、`500 {"error":"internal error"}`。
+エラー: `401 {"error":"unauthorized"}`、`404 {"error":"device not found"}`、`421 {"error":"misdirected request"}`（Mock の 8787 で `Host` が違うとき。パネルでは `HTTP_OTHER`）、`500 {"error":"internal error"}`。Mock は `Host`（421）→ パスの形（404）→ 秘密の値（401）→ `deviceId`（404）の順に確かめる。秘密の値を先に確かめるので、秘密を持たない相手には機器の有無が分からない。`Content-Type` が `application/json` でない 2xx のパネルの分類は `NOT_JSON`。
 
 ### パネルの検証と状態遷移
 
-`MedicationsJson.parse(text, today)` は次を全体の失敗（`Failed(INVALID)`）にする: JSON として読めない、入れ子の深さが 8 を超える（解析の前に数える。JSON の文字列の中の括弧とエスケープは数えない）、64 KiB を超える、`enabled` が無い・boolean でない、`enabled:true` なのに `status`・`leadDays`・`occurrences` が無いか型が違う、`leadDays` が 0〜14 の外、`timeZone` が IANA 名として読めない、`occurrences` が 200 件を超える、`key` が重複する。
+`MedicationsJson.parse(text, today)` は次を全体の失敗（`Failed(INVALID)`）にする: JSON として読めない、入れ子の深さが 9 以上（トップの `{}` / `[]` を 1 と数え、8 までは受ける。解析の前に数える。JSON の文字列の中の括弧とエスケープは数えない）、64 KiB を超える、同じオブジェクトの中で同じキーが 2 回出る、`enabled` が無い・boolean でない、`enabled:true` なのに `status`・`leadDays`・`occurrences` が無いか型が違う、`leadDays` が 0〜14 の外または整数でない、`timeZone` が文字列でない・地域の ID（`Area/City` の形）と `UTC` のどちらでもない（オフセット形式を含む。`ZoneId.of` に渡す前に形を確かめる）、`occurrences` が配列でない・200 件を超える、`key` が重複する。`timeZone` が無いときは失敗にせず、端末のタイムゾーンで今日を決める。
 
-個々の回で、`key`・`seriesId`・`name`・`date` が欠ける・型や規則に合わない・`date` が `^\d{4}-\d{2}-\d{2}$` でない・今日の −31〜+400 日の外、のどれかなら、その回だけを除く（1件のおかしな件名で全部を使えなくしない）。除いた件数は数えるが画面には出さない（ログにだけ件数を出す）。`name` の長さは Unicode のコードポイントで数え（Mock とパネルで同じ）、空白だけ・制御文字を含む名前も除く。パネルは名前を整形しない。任意のキー `pollSeconds`・`fetchedAt` の型違いは、そのキーを省いたものとして扱う（全体の失敗にしない）。`enabled:false` の応答の `fetchedAt` は読まない。
+判定の順番: (1) 大きさ・JSON・深さ・同じキーの重複、(2) `enabled`（`false` ならここで終わる）、(3) `status`・`leadDays`・`timeZone`・`occurrences`、(4) `key` の重複、(5) 回ごとの除外、(6) 並べ直し。`key` の重複は、回ごとの除外の前に、`key` が文字列である要素どうしで判定する（あとで除かれる回どうしの重複も全体の失敗）。パネルは一覧の並びを確かめず、日付・`key` の順に自分で並べ直す。
+
+個々の回で、要素がオブジェクトでない、`key`・`seriesId`・`name`・`date` が欠ける・型や規則に合わない、`date` が `[0-9]{4}-[0-9]{2}-[0-9]{2}` に文字列全体で一致しない（`matches()`）・実在しない日付、今日の −31〜+400 日の外、のどれかなら、その回だけを除く（1件のおかしな件名で全部を使えなくしない）。除いた件数は数えるが画面には出さない（ログにだけ件数を出す）。`name` の長さは Unicode のコードポイントで数え（Mock とパネルで同じ）、次のどれかなら除く: 一般カテゴリ Cc・Cf の文字を含む、対になっていないサロゲートを含む、すべての文字が Unicode の White_Space（空白だけ）、40 コードポイントを超える。パネルは名前を整形しない（trim しない）。`icon` が文字列でないときは `pill`。任意のキー `pollSeconds`・`fetchedAt` の型違い（小数・指数・文字列の数字・範囲外の整数）は、そのキーを省いたものとして扱う（全体の失敗にしない）。`enabled:false` の応答は `pollSeconds` 以外を読まない（JSON としての検査と `enabled` の型は行う）。
 
 ```kotlin
 enum class FetchError { NETWORK, TIMEOUT, HTTP_401, HTTP_404, HTTP_OTHER, REDIRECT, NOT_JSON, TOO_LARGE, INVALID }
@@ -191,7 +193,7 @@ adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel rm files/api-config.j
 - `GET /mock/state`、`POST /mock/state`（JSON で部分更新）、`GET /mock/requests`（パネルからの直近 50 件の要求: 時刻・パス・ステータス・応答のバイト数）。秘密の値は状態にも要求の一覧にも入れない。
 - すべての要求で `Host` がそのポートの `127.0.0.1:<port>` か `localhost:<port>` でなければ 421。8788 の POST は `Origin` が同じもの（`http://127.0.0.1:8788` か `http://localhost:8788`）だけ、無ければ 403。`Content-Type: application/json` 必須、本文は 16 KiB まで。`json.loads` で NaN・Infinity を拒み、知らないキー・型違い（`bool` を整数として受けない）は 400。
 - 秘密の値の比較は `hmac.compare_digest`。`log_message` を上書きし、ヘッダーと例外の中身を出さない。待ち受けアドレスを変える起動オプションは作らない。
-- 評価状態（初期値）: `preset`（`normal`）、`baseDate`（起動日。`preset` を選ぶと今日に更新。日付を直接指定もできる）、`status`（`ok`）、`calendarId`（`mock-cal-1`）、`enabled`（true）、`leadDays`（2）、`pastDays`（7）、`fault`（`none` / `unauthorized` / `serverError` / `slow`（12 秒待つ）/ `malformed` / `deepNesting`）、`pollSeconds`（15）、`timeZone`（`Asia/Tokyo`）。
+- 評価状態（初期値）: `preset`（`normal`）、`baseDate`（起動日。`preset` を選ぶと今日に更新。日付を直接指定もできる）、`status`（`ok`）、`calendarId`（`mock-cal-1`。選べるのは `mock-cal-1` と `mock-cal-2`。key の `<カレンダー>` はここから作る）、`enabled`（true）、`leadDays`（2）、`pastDays`（7）、`fault`（`none` / `unauthorized` / `serverError` / `slow`（12 秒待つ）/ `malformed` / `deepNesting`）、`pollSeconds`（15）、`timeZone`（`Asia/Tokyo`）。
 - 画面モックの上部に、点線で囲んだ評価用の切り替え欄（「評価用（本番には無い）」と明記）と要求の一覧を置く。各タブには、画面ごとの期待表示を小さく添える。
 
 予定の並び（基準日 B、系列 F=フィラリア（pill）・L=フロントライン（drop）・M=長い薬名（pill）、それぞれ毎月の繰り返し）と、今日 = B、警告日数 2 のときにパネルが出すはずの警告:
@@ -245,8 +247,8 @@ adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel rm files/api-config.j
 | AC | 確かめ方 |
 |---|---|
 | AC1 | [`api.md`](api.md) と見本 JSON（`ok` / `stale` / `fetchFailed` / `reauthRequired` / `notConnected` / `disabled` / `error-401`）の突き合わせをレビューで確認 |
-| AC2 | `python3 -m unittest`（`tools/mock-hogo-meter`）: 見本と同じキー・型。カレンダーを切り替えると key が変わる。基準日を固定して preset ごとの返す回（上の表）と、`pastDays`・範囲の境界。月末・年末・うるう日の基準日。`Content-Length` がバイト長。Host 違いが 421、Origin なし・違いの POST が 403、8787 に `/mock/*` と画面が無い、一時ファイルが 0600 で作られ終了時に消える、型違い・知らないキーが 400、`../` などのパスが 404。状態と要求の一覧に秘密の値が無い。待ち受けが 127.0.0.1 |
-| AC3 | `MedicationsJsonTest`: 見本ごとの読み取り、`leadDays=3` で 3 日前から警告、全体の失敗の各条件（深い入れ子を含む。文字列の中の括弧は数えない）、1件だけおかしな回の除外、知らないキー・知らない `status`・`icon` の扱い |
+| AC2 | `python3 -m unittest`（`tools/mock-hogo-meter`）: 見本と同じキー・型。key・seriesId が ID の作り方（単発を含む）に合い、カレンダーを切り替えると key が変わる。基準日を固定して preset ごとの返す回（上の表）と、`pastDays`・範囲の境界。月末・年末・うるう日の基準日。`Content-Length` がバイト長。Host 違いが 421、秘密の値の違いが 401（`deviceId` が違っても秘密が違えば 401。404 は秘密が正しいときだけ）、Origin なし・違いの POST が 403、8787 に `/mock/*` と画面が無い、一時ファイルが 0600 で作られ終了時に消える、型違い・知らないキーが 400、`../` などのパスが 404。状態と要求の一覧に秘密の値が無い。待ち受けが 127.0.0.1 |
+| AC3 | `MedicationsJsonTest`: 見本ごとの読み取り、`leadDays=3` で 3 日前から警告、全体の失敗の各条件（深い入れ子を含む。文字列の中の括弧は数えない。同じキーの重複、オフセット形式の `timeZone`）、1件だけおかしな回の除外、知らないキー・知らない `status`・`icon` の扱い、絵文字（UTF-16 で 2 単位）を含む 40 コードポイントの名前が受け入れられ 41 コードポイントは除かれること |
 | AC3 | `ApiConfigTest`: 正しい設定、欠けたキー、`https://` や他のホスト、パス付き、短い秘密、大きすぎるファイル |
 | AC4 | 接続設定なしで既存の 112 件が通る（`./gradlew testDebugUnitTest`）。追加分は件数を分けて報告する |
 | AC5 | `PanelModelTest` に追加: 状態遷移の表の各行、確認中の差し替えで題名と記録先が変わらない、差し替え後も実施済みが残る、警告 3 件で 2 件と「ほか 1 件」 |
