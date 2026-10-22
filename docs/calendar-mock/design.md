@@ -190,11 +190,11 @@ adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel rm files/api-config.j
 
 - 8787: `GET /api/agent/{deviceId}/medications` だけ。他のパスは 404。
 - 8788: `GET /` 画面モック（`static/index.html`）、`GET /static/mock.css`、`GET /static/mock.js`。配るファイルは固定の一覧だけで、パスからファイル名を組み立てない。
-- `GET /mock/state`、`POST /mock/state`（JSON で部分更新）、`GET /mock/requests`（パネルからの直近 50 件の要求: 時刻・パス・ステータス・応答のバイト数）。秘密の値は状態にも要求の一覧にも入れない。
+- `GET /mock/state`、`POST /mock/state`（JSON で部分更新）、`GET /mock/requests`（パネルからの直近 50 件の要求: 時刻・パス・ステータス・応答のバイト数。パスは機器向け API の正しい形のときだけ残し、それ以外は伏せる）、`GET /mock/preview`（いまパネルが 200 で受ける本文）、`GET /mock/schedule`（ダッシュボード用の世帯の予定。今日の −7〜+30 日で、機器の表示オン・オフ・`pastDays`・`fault` に左右されない。実装時に追加）。秘密の値は状態にも要求の一覧にも入れない。
 - すべての要求で `Host` がそのポートの `127.0.0.1:<port>` か `localhost:<port>` でなければ 421。8788 の POST は `Origin` が同じもの（`http://127.0.0.1:8788` か `http://localhost:8788`）だけ、無ければ 403。`Content-Type: application/json` 必須、本文は 16 KiB まで。`json.loads` で NaN・Infinity を拒み、知らないキー・型違い（`bool` を整数として受けない）は 400。
 - 秘密の値の比較は `hmac.compare_digest`。`log_message` を上書きし、ヘッダーと例外の中身を出さない。待ち受けアドレスを変える起動オプションは作らない。
 - 評価状態（初期値）: `preset`（`normal`）、`baseDate`（起動日。`preset` を選ぶと今日に更新。日付を直接指定もできる）、`status`（`ok`）、`calendarId`（`mock-cal-1`。選べるのは `mock-cal-1` と `mock-cal-2`。key の `<カレンダー>` はここから作る）、`enabled`（true）、`leadDays`（2）、`pastDays`（7）、`fault`（`none` / `unauthorized` / `serverError` / `slow`（12 秒待つ）/ `malformed` / `deepNesting`）、`pollSeconds`（15）、`timeZone`（`Asia/Tokyo`）。
-- 画面モックの上部に、点線で囲んだ評価用の切り替え欄（「評価用（本番には無い）」と明記）と要求の一覧を置く。各タブには、画面ごとの期待表示を小さく添える。
+- 画面モックの右側（幅が狭いときは下）に、点線で囲んだ評価用の切り替え欄（「評価用（本番には無い）」と明記）と要求の一覧を置く。各タブには、画面ごとの期待表示を小さく添える。
 
 予定の並び（基準日 B、系列 F=フィラリア（pill）・L=フロントライン（drop）・M=長い薬名（pill）、それぞれ毎月の繰り返し）と、今日 = B、警告日数 2 のときにパネルが出すはずの警告:
 
