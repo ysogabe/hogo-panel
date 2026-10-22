@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import mock_state as ms
@@ -56,6 +56,11 @@ def raw_exchange(port, payload):
                 break
             chunks.append(data)
     return b"".join(chunks)
+
+
+# 外部の読み込み: 絶対 URL・@import・プロトコル相対 URL (`//host/...`)。
+# `//` は文字列・括弧・`=` の直後にあるときだけ拾い、コメントの `// ...` は拾わない。
+EXTERNAL_RESOURCE_RE = re.compile(r"https?:|@import|[\"'`(=]\s*//\S")
 
 
 class ServerTestCase(unittest.TestCase):
@@ -211,7 +216,8 @@ class DeviceApiTest(ServerTestCase):
         self.assertEqual(status, 200)
 
     def test_device_port_has_no_mock_endpoints_or_pages(self):
-        for path in ("/mock/state", "/mock/requests", "/mock/preview", "/", "/static/mock.css", "/static/mock.js"):
+        for path in ("/mock/state", "/mock/requests", "/mock/preview", "/mock/schedule", "/", "/static/mock.css",
+                     "/static/mock.js"):
             status, _, _ = fetch(self.dport, "GET", path, {server.SECRET_HEADER: SECRET})
             self.assertEqual(status, 404, path)
         status, _, _ = fetch(self.dport, "POST", "/mock/state", {"Origin": "http://127.0.0.1:%d" % self.dport,
@@ -383,6 +389,7 @@ class UiTest(ServerTestCase):
         self.assertEqual(list(doc["state"]), list(ms.STATE_KEYS))
         self.assertEqual(doc["state"]["preset"], "normal")
         self.assertEqual(doc["today"], "2026-10-22")
+        self.assertEqual(doc["deviceId"], "mock-panel-1")
         self.assertEqual(doc["choices"]["preset"], list(ms.PRESETS))
         self.assertEqual(doc["choices"]["fault"], list(ms.FAULTS))
 
@@ -391,6 +398,65 @@ class UiTest(ServerTestCase):
         preview = self.get_json(self.uport, "/mock/preview")
         self.set_state(fault="none")
         self.assertEqual(preview, json.loads(self.medications()[2]))
+
+    # --- 世帯の予定 (ダッシュボード用) ---
+    def schedule(self):
+        return self.get_json(self.uport, "/mock/schedule")
+
+    def test_schedule_is_the_household_schedule(self):
+        doc = self.schedule()
+        self.assertEqual(list(doc), ["status", "calendarId", "timeZone", "fetchedAt", "occurrences"])
+        self.assertEqual((doc["status"], doc["calendarId"], doc["timeZone"]), ("ok", "mock-cal-1", "Asia/Tokyo"))
+        self.assertEqual(doc["fetchedAt"], NOW)
+        self.assertEqual([o["date"] for o in doc["occurrences"]], ["2026-11-01"])  # F+10。F+41 は +30 日の外
+
+    def test_schedule_ignores_enabled_past_days_and_fault(self):
+        self.set_state(preset="overdue")
+        expected = self.schedule()
+        # overdue は基準日の −1 日と +30 日 (今日の +30 日は上端で、含む)
+        self.assertEqual([o["date"] for o in expected["occurrences"]], ["2026-10-21", "2026-11-21"])
+        for patch in ({"enabled": False}, {"pastDays": 0}, {"pastDays": 31}, {"leadDays": 14, "pollSeconds": 99},
+                      {"fault": "unauthorized"}, {"fault": "serverError"}, {"fault": "malformed"},
+                      {"fault": "deepNesting"}, {"enabled": False, "pastDays": 0, "fault": "slow"}):
+            with self.subTest(patch=patch):
+                self.set_state(**patch)
+                self.assertEqual(self.schedule(), expected)
+            self.set_state(enabled=True, pastDays=7, leadDays=2, pollSeconds=15, fault="none")
+        # 機器向けの応答は変わる (切り離されているのは画面側の予定だけ)
+        self.set_state(enabled=False)
+        self.assertEqual(json.loads(self.medications()[2]), {"enabled": False, "pollSeconds": 15})
+        self.assertEqual(self.get_json(self.uport, "/mock/preview"), {"enabled": False, "pollSeconds": 15})
+        self.assertEqual(self.schedule(), expected)
+
+    def test_schedule_not_connected_is_empty(self):
+        for enabled in (True, False):
+            self.set_state(preset="today", status="notConnected", enabled=enabled)
+            doc = self.schedule()
+            self.assertEqual(doc, {"status": "notConnected", "calendarId": "mock-cal-1", "timeZone": "Asia/Tokyo",
+                                   "occurrences": []})
+
+    def test_schedule_range_includes_both_ends(self):
+        def dates(base_offset):
+            self.set_state(preset="normal", baseDate=(TODAY + timedelta(days=base_offset)).isoformat())
+            return [o["date"] for o in self.schedule()["occurrences"]]
+
+        def day(offset):
+            return (TODAY + timedelta(days=offset)).isoformat()
+
+        # normal は基準日の +10 と +41 日
+        self.assertEqual(dates(-17), [day(-7), day(24)])  # 下端 (−7 日) を含む
+        self.assertEqual(dates(-18), [day(23)])  # −8 日は範囲外
+        self.assertEqual(dates(20), [day(30)])  # 上端 (+30 日) を含む
+        self.assertEqual(dates(21), [])  # +31 日は範囲外
+        self.assertEqual(dates(-40), [day(1)])
+
+    def test_schedule_follows_status_calendar_and_time_zone(self):
+        self.set_state(status="stale", calendarId="mock-cal-2", timeZone="UTC", preset="soon")
+        doc = self.schedule()
+        self.assertEqual((doc["status"], doc["calendarId"], doc["timeZone"]), ("stale", "mock-cal-2", "UTC"))
+        self.assertEqual(doc["fetchedAt"], NOW - 2 * 86400)
+        self.assertTrue(all("cal2" in o["key"] for o in doc["occurrences"]))
+        self.assertTrue(doc["occurrences"])
 
     # --- POST ---
     def test_post_updates_state(self):
@@ -473,7 +539,7 @@ class UiTest(ServerTestCase):
             self.assertEqual(self.post_state(None, raw=raw)[0], 400)
 
     def test_post_other_paths_and_methods(self):
-        for path in ("/mock/requests", "/mock/preview", "/", "/nope", "/static/mock.js"):
+        for path in ("/mock/requests", "/mock/preview", "/mock/schedule", "/", "/nope", "/static/mock.js"):
             status, _, _ = fetch(self.uport, "POST", path, {"Origin": self.origin, "Content-Type": "application/json"}, b"{}")
             self.assertEqual(status, 404, path)
         for method in ("PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"):
@@ -504,6 +570,18 @@ class RealStaticFilesTest(ServerTestCase):
         for path in self.EXPECTED:
             self.assertEqual(fetch(self.dport, "GET", path)[0], 404, path)
 
+    def test_external_resource_pattern_catches_protocol_relative_urls_but_not_comments(self):
+        for bad in ('<script src="//cdn.example/x.js">', "<link href='//fonts.gstatic.com/a.css'>",
+                    "@font-face{src:url(//fonts.gstatic.com/a.woff2)}", "src: url( '//example.test/a' )",
+                    "fetch('//example.test/x')", "import('//example.test/x.js')", "import x from '//example.test/x.js'",
+                    "@import 'a.css'", "a{background:url(https://example.test/a.png)}", "const u = `//example.test`"):
+            with self.subTest(bad=bad):
+                self.assertIsNotNone(EXTERNAL_RESOURCE_RE.search(bad))
+        for ok in ("// 画面モックの動き", "  const a = 1; // コメント", "/* a */ b{}", 'fetch("/mock/state")',
+                   'fetch(path, { cache: "no-store" })', "<!-- // メモ -->", 'x = "a // b"'):
+            with self.subTest(ok=ok):
+                self.assertIsNone(EXTERNAL_RESOURCE_RE.search(ok))
+
     def test_page_is_self_contained_and_marked_as_mock(self):
         files = {name: (server.STATIC_DIR / name).read_text(encoding="utf-8")
                  for name in ("index.html", "mock.css", "mock.js")}
@@ -511,7 +589,7 @@ class RealStaticFilesTest(ServerTestCase):
         self.assertIn("評価用（本番には無い）", files["index.html"])
         for name, content in files.items():
             # 外部の CDN・フォント・ライブラリを読まない (CSP は default-src 'self')
-            self.assertNotRegex(content, r"https?://|//cdn|@import", name)
+            self.assertIsNone(EXTERNAL_RESOURCE_RE.search(content), name)
         # API の値は textContent だけで入れる。インラインのスクリプト・スタイルも使わない (CSP で止まる)
         self.assertNotIn("innerHTML", files["mock.js"])
         self.assertNotIn("insertAdjacentHTML", files["mock.js"])
@@ -526,7 +604,7 @@ class SecretAndLogTest(ServerTestCase):
         self.medications(secret="wrong-" + SECRET)
         fetch(self.dport, "GET", "/api/agent/mock-panel-1/medications?token=" + SECRET)
         self.post_state({"preset": "soon"})
-        for path in ("/mock/state", "/mock/requests", "/mock/preview"):
+        for path in ("/mock/state", "/mock/requests", "/mock/preview", "/mock/schedule"):
             status, resp, body = fetch(self.uport, "GET", path)
             self.assertEqual(status, 200)
             self.assertNotIn(SECRET.encode(), body, path)

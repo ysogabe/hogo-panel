@@ -24,6 +24,8 @@ LEAD_DAYS_RANGE = (0, 14)
 PAST_DAYS_RANGE = (0, 31)  # パネルが受ける -31 日まで
 POLL_SECONDS_RANGE = (1, 86400)  # パネルは 10〜3600 に収める。収める動作を評価できるよう広めに許す
 FUTURE_DAYS = 60
+SCHEDULE_PAST_DAYS = 7  # ダッシュボードの「直近の投薬予定」の範囲
+SCHEDULE_FUTURE_DAYS = 30
 BASE_DATE_RANGE = (date(2000, 1, 1), date(2099, 12, 31))
 
 NAME_MAX_CODEPOINTS = 40
@@ -238,11 +240,9 @@ def public_state(state):
     return {key: state[key] for key in STATE_KEYS}
 
 
-def occurrences_for(state, today):
-    """状態から返す回の一覧 (範囲 today-pastDays .. today+60、両端を含む。日付・key の昇順)。"""
+def occurrences_between(state, low, high):
+    """状態から返す回の一覧 (範囲 low .. high、両端を含む。日付・key の昇順)。"""
     base = date.fromisoformat(state["baseDate"])
-    low = today - timedelta(days=state["pastDays"])
-    high = today + timedelta(days=FUTURE_DAYS)
     result = []
     for series, offset in PRESET_OCCURRENCES[state["preset"]]:
         when = base + timedelta(days=offset)
@@ -261,6 +261,12 @@ def occurrences_for(state, today):
     return result
 
 
+def occurrences_for(state, today):
+    """機器向け API の回の一覧 (範囲 today-pastDays .. today+60、両端を含む)。"""
+    return occurrences_between(state, today - timedelta(days=state["pastDays"]),
+                               today + timedelta(days=FUTURE_DAYS))
+
+
 def build_medications(state, today, now_epoch):
     """機器向け API の 200 の応答 (dict)。fault は扱わない。"""
     if not state["enabled"]:
@@ -272,6 +278,20 @@ def build_medications(state, today, now_epoch):
         body["fetchedAt"] = max(0, int(now_epoch) - FETCHED_AGO[status])
     body["pollSeconds"] = state["pollSeconds"]
     body["occurrences"] = [] if status == "notConnected" else occurrences_for(state, today)
+    return body
+
+
+def build_schedule(state, today, now_epoch):
+    """画面モックのダッシュボード用の世帯の予定 (dict)。機器の enabled・pastDays・fault に左右されない。
+    範囲は今日の SCHEDULE_PAST_DAYS 日前から SCHEDULE_FUTURE_DAYS 日後 (両端を含む)。未接続は回を持たない。"""
+    status = state["status"]
+    body = {"status": status, "calendarId": state["calendarId"], "timeZone": state["timeZone"]}
+    if status == "notConnected":
+        body["occurrences"] = []
+        return body
+    body["fetchedAt"] = max(0, int(now_epoch) - FETCHED_AGO[status])
+    body["occurrences"] = occurrences_between(state, today - timedelta(days=SCHEDULE_PAST_DAYS),
+                                              today + timedelta(days=SCHEDULE_FUTURE_DAYS))
     return body
 
 

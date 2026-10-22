@@ -1,12 +1,9 @@
-// 画面モックの動き。表示は /mock/state と /mock/preview から作り、予定の計算はしない。
+// 画面モックの動き。表示は /mock/state・/mock/schedule・/mock/requests から作り、予定の計算はしない。
 // API の値は textContent だけで画面に入れる (HTML の文字列として組み立てない)。
 "use strict";
 (function () {
   const POLL_MS = 2000;
-  const UPCOMING_PAST_DAYS = 7;
-  const UPCOMING_FUTURE_DAYS = 30;
   const UPCOMING_MAX = 5;
-  const DEVICE_PATH = /^\/api\/agent\/[^/]+\/medications$/;
 
   // 表示用の名前 (Mock の値 -> 画面の文字)。知らない値はそのまま出す。
   const CALENDAR_NAMES = { "mock-cal-1": "ねこの投薬", "mock-cal-2": "家族" };
@@ -41,7 +38,7 @@
   const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
   let doc = null; // GET /mock/state
-  let preview = null; // GET /mock/preview
+  let schedule = null; // GET /mock/schedule (世帯の予定。機器の表示設定に左右されない)
   let requests = [];
   let epoch = 0; // POST のたびに進め、古い読み込みの結果で上書きしない
   let posting = 0;
@@ -89,8 +86,14 @@
     }
   }
 
-  function formatClock(epochSeconds) {
-    return new Date(epochSeconds * 1000).toLocaleTimeString("ja-JP", { hour12: false });
+  function formatClock(epochSeconds, timeZone) {
+    const date = new Date(epochSeconds * 1000);
+    const options = { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" };
+    try {
+      return new Intl.DateTimeFormat("ja-JP", Object.assign({ timeZone: timeZone }, options)).format(date);
+    } catch (e) {
+      return new Intl.DateTimeFormat("ja-JP", options).format(date);
+    }
   }
 
   function ago(seconds) {
@@ -124,10 +127,10 @@
   async function refresh(force) {
     const mine = epoch;
     try {
-      const [s, p, r] = await Promise.all([getJson("/mock/state"), getJson("/mock/preview"), getJson("/mock/requests")]);
+      const [s, h, r] = await Promise.all([getJson("/mock/state"), getJson("/mock/schedule"), getJson("/mock/requests")]);
       if (mine !== epoch || posting > 0) return;
       doc = s;
-      preview = p;
+      schedule = h;
       requests = Array.isArray(r.requests) ? r.requests : [];
       if (bannerKind === "connection") banner("");
       render(force === true);
@@ -165,7 +168,7 @@
 
   // --- 表示 ---
   function render(force) {
-    if (!doc || !preview) return;
+    if (!doc || !schedule) return;
     renderTop();
     renderCalendar(force);
     renderDevice();
@@ -178,17 +181,8 @@
     const list = $("upcoming");
     const note = $("upcoming-note");
     const statusNote = $("status-note");
-    const items = [];
-
-    if (state.enabled && state.status !== "notConnected" && Array.isArray(preview.occurrences)) {
-      const today = dayNumber(doc.today);
-      const inRange = preview.occurrences.filter((occ) => {
-        const diff = dayNumber(occ.date) - today;
-        return diff >= -UPCOMING_PAST_DAYS && diff <= UPCOMING_FUTURE_DAYS;
-      });
-      inRange.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.key < b.key ? -1 : 1));
-      items.push(...inRange.slice(0, UPCOMING_MAX));
-    }
+    // 範囲 (今日の −7〜+30 日) と並びはサーバーが決める。ここでは件数だけ切る。
+    const items = Array.isArray(schedule.occurrences) ? schedule.occurrences.slice(0, UPCOMING_MAX) : [];
 
     const rows = items.map((occ) => {
       const diff = dayNumber(occ.date) - dayNumber(doc.today);
@@ -210,9 +204,7 @@
 
     let message = "";
     let showLink = false;
-    if (!state.enabled) {
-      message = "この機器は投薬表示がオフです。Mock はオフの機器へ予定を返さないため、この一覧も空になります。";
-    } else if (state.status === "notConnected") {
+    if (schedule.status === "notConnected") {
       message = "カレンダー未接続です。";
       showLink = true;
     } else if (items.length === 0) {
@@ -238,9 +230,11 @@
       ? { label: "投薬表示: オン", tone: "sage" }
       : { label: "投薬表示: オフ", tone: "terracotta" });
     setHidden($("device-off-note"), state.enabled);
-    const last = requests.filter((r) => DEVICE_PATH.test(String(r.path))).pop();
+    // 要求の一覧に残るのは、設定の deviceId と一致するときの正しい形のパスだけ。ほかは伏せた表示になる。
+    const devicePath = "/api/agent/" + doc.deviceId + "/medications";
+    const last = requests.filter((r) => r.path === devicePath).pop();
     text($("device-last-fetch"), last
-      ? formatClock(last.time) + "（" + ago(Math.max(0, doc.serverTime - last.time)) + "・ステータス " + last.status + "）"
+      ? formatClock(last.time, state.timeZone) + "（" + ago(Math.max(0, doc.serverTime - last.time)) + "・ステータス " + last.status + "）"
       : "まだありません");
   }
 
@@ -249,10 +243,10 @@
     const info = label(STATUS, state.status);
     setBadge($("conn-badge"), info);
     text($("conn-text"), info.text);
-    const zone = preview.timeZone || state.timeZone;
-    text($("conn-fetched"), typeof preview.fetchedAt === "number"
-      ? formatEpoch(preview.fetchedAt, zone) + "（" + ago(Math.max(0, doc.serverTime - preview.fetchedAt)) + "）"
-      : state.enabled ? "—（未接続）" : "—（この機器は表示オフのため Mock は取得時刻を返しません）");
+    const zone = schedule.timeZone || state.timeZone;
+    text($("conn-fetched"), typeof schedule.fetchedAt === "number"
+      ? formatEpoch(schedule.fetchedAt, zone) + "（" + ago(Math.max(0, doc.serverTime - schedule.fetchedAt)) + "）"
+      : "—（未接続）");
 
     const connect = $("btn-connect");
     text(connect, state.status === "reauthRequired" ? "Google と再接続" : "Google と接続");
@@ -330,7 +324,7 @@
       const tr = document.createElement("tr");
       const bad = r.status !== 200;
       tr.append(
-        make("td", "", formatClock(r.time)),
+        make("td", "", formatClock(r.time, doc.state.timeZone)),
         make("td", "", String(r.method)),
         make("td", "path", String(r.path)),
         make("td", bad ? "status-bad" : "status-ok", String(r.status)),

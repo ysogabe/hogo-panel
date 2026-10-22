@@ -95,6 +95,7 @@ class MockApp:
                 "calendarId": list(mock_state.CALENDARS),
                 "fault": list(mock_state.FAULTS),
             },
+            "deviceId": self.device_id,
             "today": mock_state.today_in_zone(state["timeZone"], now).isoformat(),
             "serverTime": int(now),
         }
@@ -104,6 +105,12 @@ class MockApp:
         state = self.snapshot()
         now = self.now()
         return mock_state.build_medications(state, mock_state.today_in_zone(state["timeZone"], now), now)
+
+    def schedule(self):
+        """世帯の予定 (ダッシュボード用)。機器の enabled・pastDays・fault に関係しない。画面モックの表示用。"""
+        state = self.snapshot()
+        now = self.now()
+        return mock_state.build_schedule(state, mock_state.today_in_zone(state["timeZone"], now), now)
 
     def log_request(self, method, path, status, size, fault):
         """method・path は呼び出し側が固定の表示に伏せたものだけを渡す (要求の文字列をそのまま残さない)。"""
@@ -275,6 +282,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, app.requests_document())
         elif path == "/mock/preview":
             self._send_json(200, app.preview())
+        elif path == "/mock/schedule":
+            self._send_json(200, app.schedule())
         else:
             self._send_json(404, ERR_NOT_FOUND)
 

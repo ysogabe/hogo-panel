@@ -53,15 +53,15 @@ adb -s <アドレス>:5555 shell am start -n io.github.ysogabe.hogo.panel/.MainA
 ブラウザで `http://127.0.0.1:8788/` を開く。hogo-meter のダッシュボードに寄せた画面モック（本物ではない）が出る。
 
 - **タブ（1 ページで切り替え。`#top` / `#calendar` / `#device` で直接開ける）**
-  - トップ: 「直近の投薬予定」（今日の −7〜+30 日、最大 5 件。実施は送らないので、パネルで実施済みにしても残る）と、機器のカード（「投薬表示: オン / オフ」。オフは赤い枠）。未接続のときは「カレンダー未接続」と設定への導線。
+  - トップ: 「直近の投薬予定」（世帯の予定 `/mock/schedule` から。今日の −7〜+30 日、最大 5 件。実施は送らないので、パネルで実施済みにしても残る）と、機器のカード（「投薬表示: オン / オフ」。オフは赤い枠）。未接続のときは「カレンダー未接続」と設定への導線。
   - カレンダー連携: 接続状態（正常・古い・未接続・再接続が必要・取得失敗）、「Google と接続」「切断」（見せかけ。Mock の `status` が変わるだけ）、架空のカレンダー（「ねこの投薬」= `mock-cal-1`、「家族」= `mock-cal-2`）の選択、警告を始める日数（表示のみ）、最後に取れた時刻。
   - デバイス詳細: 「投薬の予定を表示する」のスイッチ（Mock の `enabled`）。
 - **評価用（本番には無い）の切り替え欄（右側。幅が狭いときは下）**: 予定の並び（preset 9 種）・接続状態・表示のオン・オフ・警告を始める日数・過去の日数・取得間隔・通信の失敗（fault）・基準日・タイムゾーン。基準日・今日・サーバー時刻も出る。
 - **パネルからの最近の要求**（時刻・メソッド・パス・ステータス・fault）を 2 秒ごとに読み直して出す。
 
-画面の変更は `POST /mock/state` で Mock の状態を変え、パネルの次の取得（`pollSeconds`、既定 15 秒）に反映される。表示は `/mock/state` と `/mock/preview` から作り、予定の計算はブラウザで持たない（−7〜+30 日の絞り込みだけブラウザでする）。表示が空に見えるときの注意:
+画面の変更は `POST /mock/state` で Mock の状態を変え、パネルの次の取得（`pollSeconds`、既定 15 秒）に反映される。表示は `/mock/state`・`/mock/schedule`・`/mock/requests` から作り、予定の計算も範囲の絞り込みもブラウザでは持たない（最大 5 件に切るだけ）。ダッシュボードの予定とカレンダー連携の「最後に取れた時刻」は世帯の予定から作るので、機器の表示のオン・オフや過去の日数に左右されない。表示が変わらないときの注意:
 
-- 表示がオフのとき、Mock は `enabled:false` だけを返すので、トップの「直近の投薬予定」も空になる（実際のダッシュボードは世帯の予定を出すはずだが、このモックは機器向けの応答から作っている）。
+- 表示のオン・オフ（`enabled`）と過去の日数（`pastDays`）は機器向けの応答（`/mock/preview`）だけに効く。トップの「直近の投薬予定」は変わらない。
 - `fault` はパネルへの応答にだけ効く。画面モックの表示は変わらない。
 
 ファイルは `static/index.html`・`mock.css`・`mock.js` だけ（外部の CDN・フォント・ライブラリは読まない。ビルド不要）。API の値は `textContent` だけで入れる。
@@ -70,10 +70,11 @@ adb -s <アドレス>:5555 shell am start -n io.github.ysogabe.hogo.panel/.MainA
 
 | | | |
 |---|---|---|
-| `GET /mock/state` | 評価状態（`state`）、選べる値（`choices`）、サーバーの今日（`today`）、`serverTime` | |
+| `GET /mock/state` | 評価状態（`state`）、選べる値（`choices`）、サーバーの今日（`today`）、`serverTime`、機器 ID（`deviceId`。画面の「最後の取得」の照合用） | |
 | `POST /mock/state` | 部分更新。`Content-Type: application/json`、本文 16 KiB まで、`Origin` が同じ（`http://127.0.0.1:8788` か `http://localhost:8788`） | 成功時は `GET` と同じ内容 |
 | `GET /mock/requests` | 機器向け API への直近 50 件（時刻・メソッド・パス・ステータス・バイト数・fault）。秘密・ヘッダー・クエリは記録しない。パスは機器向け API の正しい形のときだけ残し（`deviceId` が設定と違えば `<other>`）、それ以外は `<other path>` に置き換える | |
-| `GET /mock/preview` | いまパネルが 200 で受ける本文（fault を除く）。画面モックの表示用 | |
+| `GET /mock/preview` | いまパネルが 200 で受ける本文（fault を除く）。画面モックは使わない（パネルの受け取る内容を見るため） | |
+| `GET /mock/schedule` | 世帯の予定（ダッシュボード用）: `status`・`calendarId`・`timeZone`・`fetchedAt`・`occurrences`。機器の `enabled`・`pastDays`・`fault` に関係せず、範囲は今日の −7〜+30 日（両端を含む）で固定。未接続は `occurrences: []`（`fetchedAt` なし） | |
 
 評価状態のキー: `preset`（`normal` / `soon` / `today` / `overdue` / `expired` / `two` / `three` / `longName` / `none`）、`baseDate`（`YYYY-MM-DD`）、`status`（`ok` / `stale` / `fetchFailed` / `reauthRequired` / `notConnected`）、`calendarId`（`mock-cal-1` / `mock-cal-2`）、`enabled`、`leadDays`（0〜14）、`pastDays`（0〜31）、`fault`（`none` / `unauthorized` / `serverError` / `slow` / `malformed` / `deepNesting`）、`pollSeconds`（1〜86400）、`timeZone`（`Asia/Tokyo` のような地域 ID か `UTC`）。
 
