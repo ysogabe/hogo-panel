@@ -53,6 +53,8 @@ tools/mock-hogo-meter/
   mock_state.py      # 評価状態と、状態から応答を作る純粋関数（基準日・今日を引数で受ける）
   static/index.html, mock.css, mock.js   # 画面モック（1ページ、タブで切り替え）
   test_mock_state.py, test_server.py     # unittest
+  testdata/garbage-sample.json           # ゴミ収集の定義の架空の見本（テスト用）
+  local/garbage.json                     # ゴミ収集の定義（管理側が置く。Git の管理外。0.4.0）
   README.md          # 起動・adb reverse・パネルの設定・評価の手順
 app/src/test/resources/api/medications/*.json   # 応答の見本（両方のテストが読む）
 app/src/main/kotlin/.../ScheduleSource.kt        # 取得結果の型・取得の抽象
@@ -102,7 +104,8 @@ API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見�
 | `seriesId` | string | 系列（繰り返し予定の元）。単発の予定は `key` と同じ値。`key` と同じ文字の規則 |
 | `name` | string | 薬名（予定の件名）。1〜40 コードポイント（Unicode。UTF-16 の単位ではない）。送り手（Mock・本番）は前後の空白と一般カテゴリ Cc・Cf の文字を除き、40 コードポイントまでに切って渡す。パネルは整形しない（trim しない） |
 | `date` | string | 予定日（`timeZone` での暦日。単日の終日予定を対象とする）。`[0-9]{4}-[0-9]{2}-[0-9]{2}` に文字列全体が一致し（Python は `re.fullmatch`、Kotlin は `matches()`）、実在する日付 |
-| `icon` | string | `pill` / `drop`。省略時・知らない値・文字列でない値は `pill`。決め方は未決（PRD） |
+| `icon` | string | `pill` / `drop` / `trash`（0.4.0 で追加。ゴミ）。省略時・知らない値・文字列でない値は `pill`。決め方は未決（PRD） |
+| `dayOnly` | boolean（任意） | 0.4.0 で追加。`true` の回は予定日の当日だけ警告する（[ゴミ収集](#ゴミ収集当日だけ出す予定040)）。省略・`null` は `false`。boolean でなければ型違いで、その回だけを除く |
 
 `key` の不変条件: 同じ回なら、再取得・件名の変更・予定日の移動・系列の一部の回だけの変更をしても変わらない（Google の回の ID が元の開始日から作られることを前提にする。本番の作り方は hogo-meter で確かめる）。別のカレンダーの同名の予定とは別の key になる。カレンダー ID をそのまま入れない（本番ではハッシュなどで伏せる）。Mock の ID は架空の値で、`key` は `occ-<カレンダー>-<系列>-<元の予定日 YYYYMMDD>`（例 `occ-cal1-F-20261024`）、`seriesId` は `ser-<カレンダー>-<系列>`（例 `ser-cal1-F`）。`<カレンダー>` は Mock の calendarId から作る（`mock-` を外してハイフンを除く。`mock-cal-1` → `cal1`、`mock-cal-2` → `cal2`）ので、カレンダーを切り替えると別の key になる。単発の予定も同じ形でカレンダーを含める（`occ-cal1-once-20261030`、系列は `once`。単発の `seriesId` は `key` と同じ値）。
 
@@ -130,7 +133,7 @@ API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見�
 
 判定の順番: (1) 大きさ・JSON・深さ・同じキーの重複、(2) `enabled`（`false` ならここで終わる）、(3) `status`・`leadDays`・`timeZone`・`occurrences`、(4) `key` の重複、(5) 回ごとの除外、(6) 並べ直し。`key` の重複は、回ごとの除外の前に、`key` が文字列である要素どうしで判定する（あとで除かれる回どうしの重複も全体の失敗）。パネルは一覧の並びを確かめず、日付・`key` の順に自分で並べ直す。
 
-個々の回で、要素がオブジェクトでない、`key`・`seriesId`・`name`・`date` が欠ける・型や規則に合わない、`date` が `[0-9]{4}-[0-9]{2}-[0-9]{2}` に文字列全体で一致しない（`matches()`）・実在しない日付、今日の −31〜+400 日の外、のどれかなら、その回だけを除く（1件のおかしな件名で全部を使えなくしない）。除いた件数は数えるが画面には出さない（ログにだけ件数を出す）。`name` の長さは Unicode のコードポイントで数え（Mock とパネルで同じ）、次のどれかなら除く: 一般カテゴリ Cc・Cf の文字を含む、対になっていないサロゲートを含む、すべての文字が Unicode の White_Space（空白だけ）、40 コードポイントを超える。パネルは名前を整形しない（trim しない）。`icon` が文字列でないときは `pill`。任意のキー `pollSeconds`・`fetchedAt` の型違い（小数・指数・文字列の数字・範囲外の整数）は、そのキーを省いたものとして扱う（全体の失敗にしない）。`enabled:false` の応答は `pollSeconds` 以外を読まない（JSON としての検査と `enabled` の型は行う）。
+個々の回で、要素がオブジェクトでない、`key`・`seriesId`・`name`・`date` が欠ける・型や規則に合わない、`date` が `[0-9]{4}-[0-9]{2}-[0-9]{2}` に文字列全体で一致しない（`matches()`）・実在しない日付、今日の −31〜+400 日の外、のどれかなら、その回だけを除く（1件のおかしな件名で全部を使えなくしない）。除いた件数は数えるが画面には出さない（ログにだけ件数を出す）。`name` の長さは Unicode のコードポイントで数え（Mock とパネルで同じ）、次のどれかなら除く: 一般カテゴリ Cc・Cf の文字を含む、対になっていないサロゲートを含む、すべての文字が Unicode の White_Space（空白だけ）、40 コードポイントを超える。パネルは名前を整形しない（trim しない）。`icon` が文字列でないときは `pill`。`dayOnly` が boolean でない（`null` ではない）回は、型違いとしてその回だけを除く。任意のキー `pollSeconds`・`fetchedAt` の型違い（小数・指数・文字列の数字・範囲外の整数）は、そのキーを省いたものとして扱う（全体の失敗にしない）。`enabled:false` の応答は `pollSeconds` 以外を読まない（JSON としての検査と `enabled` の型は行う）。
 
 ```kotlin
 enum class FetchError { NETWORK, TIMEOUT, HTTP_401, HTTP_404, HTTP_OTHER, REDIRECT, NOT_JSON, TOO_LARGE, INVALID }
@@ -159,7 +162,7 @@ sealed interface ScheduleResult {
 - 実施済み（`doneKeys`）は差し替えても残す。新しい一覧に無い key は判定に出ないだけ。評価をやり直すときは `am force-stop` で消える（メモリ内だけ）。
 - `Confirmation` に、開いた時点の `Occurrence` を持たせる。題名と `recordMed` はこの回を使い、一覧を引き直さない。
 - `warnings()` は `ReminderPolicy.warnings(occurrences, doneKeys, today, leadDays)`。`ReminderPolicy` の `warnStart`・`phase`・`warnings` は `leadDays` を引数で受け、初期値の引数に `WARN_DAYS_BEFORE` を使う（シナリオモードと未取得のときだけ使われる）。
-- 薬カードは最大 2 枚。警告が 3 件以上なら、段階（未確認 → 今日 → そろそろ）と予定日の順で 2 件を出し、2 枚目のカードの下に「ほか N 件」と小さく出す。時計の札も 2 件と「ほか N 件」。薬名はカード・札の幅に収まらなければ末尾を「…」で切る。
+- 薬カードは最大 2 枚。警告が 3 件以上なら、段階（未確認 → 今日 → そろそろ）、予定日、薬（`dayOnly` でない）をゴミなど当日だけの回より先に、の順で 2 件を出し、2 枚目のカードの下に「ほか N 件」と小さく出す。時計の札も 2 件と「ほか N 件」。薬名はカード・札の幅に収まらなければ末尾を「…」で切る。
 - 状態の表示はヘッダーの右、時刻の左に小さな文字で1行。色はテラコッタ系の控えめな色。時計には出さない（時計は薬名だけの既存方針）。
 
 ### 通信（`HttpScheduleSource`）
@@ -191,10 +194,10 @@ adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel rm files/api-config.j
 
 - 8787: `GET /api/agent/{deviceId}/medications` だけ。他のパスは 404。
 - 8788: `GET /` 画面モック（`static/index.html`）、`GET /static/mock.css`、`GET /static/mock.js`。配るファイルは固定の一覧だけで、パスからファイル名を組み立てない。
-- `GET /mock/state`、`POST /mock/state`（JSON で部分更新）、`GET /mock/requests`（パネルからの直近 50 件の要求: 時刻・パス・ステータス・応答のバイト数。パスは機器向け API の正しい形のときだけ残し、それ以外は伏せる）、`GET /mock/preview`（いまパネルが 200 で受ける本文）、`GET /mock/schedule`（ダッシュボード用の世帯の予定。今日の −7〜+30 日で、機器の表示オン・オフ・`pastDays`・`fault` に左右されない。実装時に追加）。秘密の値は状態にも要求の一覧にも入れない。
+- `GET /mock/state`、`POST /mock/state`（JSON で部分更新）、`GET /mock/requests`（パネルからの直近 50 件の要求: 時刻・パス・ステータス・応答のバイト数。パスは機器向け API の正しい形のときだけ残し、それ以外は伏せる）、`GET /mock/preview`（いまパネルが 200 で受ける本文）、`GET /mock/schedule`（ダッシュボード用の世帯の予定。今日の −7〜+30 日で、機器の表示オン・オフ・`pastDays`・`fault` に左右されない。実装時に追加。ゴミ収集の回も含む）。秘密の値は状態にも要求の一覧にも入れない。
 - すべての要求で `Host` がそのポートの `127.0.0.1:<port>` か `localhost:<port>` でなければ 421。8788 の POST は `Origin` が同じもの（`http://127.0.0.1:8788` か `http://localhost:8788`）だけ、無ければ 403。`Content-Type: application/json` 必須、本文は 16 KiB まで。`json.loads` で NaN・Infinity を拒み、知らないキー・型違い（`bool` を整数として受けない）は 400。
 - 秘密の値の比較は `hmac.compare_digest`。`log_message` を上書きし、ヘッダーと例外の中身を出さない。待ち受けアドレスを変える起動オプションは作らない。
-- 評価状態（初期値）: `preset`（`normal`）、`baseDate`（起動日。`preset` を選ぶと今日に更新。日付を直接指定もできる）、`status`（`ok`）、`calendarId`（`mock-cal-1`。選べるのは `mock-cal-1` と `mock-cal-2`。key の `<カレンダー>` はここから作る）、`enabled`（true）、`leadDays`（2）、`pastDays`（7）、`fault`（`none` / `unauthorized` / `serverError` / `slow`（12 秒待つ）/ `malformed` / `deepNesting`）、`pollSeconds`（15）、`timeZone`（`Asia/Tokyo`）。
+- 評価状態（初期値）: `preset`（`normal`）、`baseDate`（起動日。`preset` を選ぶと今日に更新。日付を直接指定もできる）、`status`（`ok`）、`calendarId`（`mock-cal-1`。選べるのは `mock-cal-1` と `mock-cal-2`。key の `<カレンダー>` はここから作る）、`enabled`（true）、`leadDays`（2）、`pastDays`（7）、`fault`（`none` / `unauthorized` / `serverError` / `slow`（12 秒待つ）/ `malformed` / `deepNesting`）、`pollSeconds`（15）、`timeZone`（`Asia/Tokyo`）、`garbage`（true。0.4.0 で追加。ゴミ収集カレンダーを加えるか）。
 - 画面モックの右側（幅が狭いときは下）に、点線で囲んだ評価用の切り替え欄（「評価用（本番には無い）」と明記）と要求の一覧を置く。各タブには、画面ごとの期待表示を小さく添える。
 
 予定の並び（基準日 B、系列 F=フィラリア（pill）・L=フロントライン（drop）・M=長い薬名（pill）、それぞれ毎月の繰り返し）と、今日 = B、警告日数 2 のときにパネルが出すはずの警告:
@@ -215,13 +218,25 @@ adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel rm files/api-config.j
 
 画面モックの各タブの内容:
 
-- **トップ:** ヘッダーの下に「直近の投薬予定」カード（今日の 7 日前から 30 日後まで、最大 5 件、日付と薬名、過ぎたものは「過ぎています」）。その下に架空のデバイスカード（パネルのカードには「投薬表示: オン/オフ」）。未接続なら「カレンダー未接続」と設定への導線。パネルで実施済みにしても、ここには残る（今回の期待動作として明記）。
-- **カレンダー連携:** 接続状態（未接続・接続済み・再接続が必要・取得失敗・古い）、「Google と接続」「切断」ボタン（見せかけ）、架空のカレンダー一覧（「ねこの投薬」「家族」）からの選択、警告を始める日数（表示のみ。「初期値 2 日」）、最後に取れた時刻。
+- **トップ:** ヘッダーの下に「直近の予定」カード（今日の 7 日前から 30 日後まで。薬は最大 5 件、日付と薬名、過ぎたものは「過ぎています」。ゴミ収集など当日だけの回は、薬を押し出さないよう別に今日以降の最大 5 件を数え、ゴミ箱のアイコンと「ゴミ・当日だけ」のラベルを付ける）。その下に架空のデバイスカード（パネルのカードには「投薬表示: オン/オフ」）。未接続なら「カレンダー未接続」と設定への導線。パネルで実施済みにしても、ここには残る（今回の期待動作として明記）。
+- **カレンダー連携:** 接続状態（未接続・接続済み・再接続が必要・取得失敗・古い）、「Google と接続」「切断」ボタン（見せかけ）、架空のカレンダー一覧（「ねこの投薬」「家族」）からの選択、使うカレンダーとして「ゴミ収集（当日だけ表示）」（選択ではなく表示。使用中・オフ・`local/garbage.json` が無い、のどれか）、警告を始める日数（表示のみ。「初期値 2 日」）、最後に取れた時刻。
 - **デバイス詳細:** 「設定」タブ内に「投薬の予定を表示する」のスイッチ。
+
+## ゴミ収集（当日だけ出す予定、0.4.0）
+
+世帯のカレンダーに「ゴミ収集」を足し、薬のカレンダーと一緒にパネルへ配る。パネルでは薬と同じ扱い（同じカード、確認の「やった」で記録・取消）だが、**当日だけ**出す。前日以前の予告（そろそろ）も、翌日以降の持ち越し（未確認）もしない。
+
+- **API:** `occurrences[]` に任意の `dayOnly`（boolean）と `icon: trash` を足す（v0 に後方互換。古いパネルは知らないキーを無視し、`trash` を `pill` にする）。`dayOnly:true` の回の段階は今日だけで、応答の `leadDays` に関係しない。
+- **パネル:** `ReminderPolicy` は `dayOnly` の回の警告開始日を予定日にし、当日だけ「今日」、それ以外は対象外にする（系列ごとに最新の回を選ぶ考え方と、`doneKeys` での実施済みの扱いは変えない）。`trash`（ゴミ箱）は既存の `pill`・`drop` と同じ Canvas の図形・大きさで、薬カードと確認の画面に出す（時計の札は薬名だけの既存方針のまま）。同じ日に複数の回が重なる（例: ある曜日に 2 種類、別の曜日に 2 種類）ので、並びは「段階 → 予定日 → 薬を先」にし、薬カード 2 枚と「ほか N 件」の既存の形のままで足りる（`PanelModelTest` で確かめる）。
+- **Mock:** 評価状態に `garbage`（boolean、既定 true）。true で、かつ `tools/mock-hogo-meter/local/garbage.json` が読めたとき、その回を薬の回に加えて返す（機器向け API・`/mock/preview`・`/mock/schedule`）。`notConnected` と `enabled:false` の扱いは薬と同じで、薬のカレンダーの選択（`mock-cal-1`・`mock-cal-2`）と基準日（preset）に左右されない。範囲は薬と同じ（機器向けは今日 −`pastDays`〜+60 日、`/mock/schedule` は −7〜+30 日）。上限は 200 件・64 KiB（範囲で絞るので通常は 30 件ほど。超える定義でも先頭の 200 件で切る）。
+- **定義ファイル:** 実データ（ある地区の収集日）は `local/garbage.json`（`tools/mock-hogo-meter/.gitignore` で Git の管理外）。形は `{"calendarName", "dayOnly", "series": [{"id", "name", "dates": ["YYYY-MM-DD", ...]}]}`。パスは `server.py` の場所からの固定の相対パスで、引数・環境変数では変えられない（テストがコードの中で差し替えるだけ）。起動時に 1 回だけ読む。検証は、`id` が `[a-z0-9]{1,16}`、`name` が api.md の規則（前後の空白と Cc・Cf を除き 40 コードポイントまで）、日付が `YYYY-MM-DD`。外れた種類と日付は捨てて起動を続ける。ファイルが無い・壊れている（JSON として読めない、大きすぎる、`series` が配列でない）ときは、ゴミの回を出さずに起動を続け、起動時にパスと「読めなかった」ことだけを表示する（中身は出さない）。種類は 20、1 種類の日付は 800 まで。リポジトリには架空の見本 `testdata/garbage-sample.json` だけを置き、テストはそれを使う。
+- **画面モック:** 評価用の切り替え欄に「ゴミ収集カレンダー」のオン・オフ（ファイルが無いときは無効にして「local/garbage.json が無い」と出す）。トップは「直近の予定」にし、ゴミの回は種類が分かる見た目にする。カレンダー連携のタブに「ゴミ収集（当日だけ表示）」を表示する。
+- **本番:** hogo-meter では、カレンダーごとの設定（当日だけ・警告日数）として持つ想定（[CALENDAR_INTEGRATION.md](../CALENDAR_INTEGRATION.md)）。
+- **公開リポジトリの注意:** 実データの中身・地名・自治体名・地区・日付の並びを、コミット・文書・テスト・ログに書かない。
 
 ## データ
 
-- Mock API: メモリ内だけ。再起動で初期状態と新しい評価用の値。架空の薬名と架空のカレンダー名・ID（`mock-cal-1`）。
+- Mock API: メモリ内だけ。再起動で初期状態と新しい評価用の値。架空の薬名と架空のカレンダー名・ID（`mock-cal-1`）。ゴミ収集の定義だけは管理側が置く `local/garbage.json`（Git の管理外、読むだけで書かない）。
 - パネル: 接続設定のファイルだけを端末のアプリ専用領域に置く。予定と実施はメモリ内だけ（今と同じ）。`allowBackup="false"` は今のまま。
 
 ## 安全面

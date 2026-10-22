@@ -17,7 +17,7 @@ FAULTS = ("none", "unauthorized", "serverError", "slow", "malformed", "deepNesti
 
 STATE_KEYS = (
     "preset", "baseDate", "status", "calendarId", "enabled",
-    "leadDays", "pastDays", "fault", "pollSeconds", "timeZone",
+    "leadDays", "pastDays", "fault", "pollSeconds", "timeZone", "garbage",
 )
 
 LEAD_DAYS_RANGE = (0, 14)
@@ -26,6 +26,13 @@ POLL_SECONDS_RANGE = (1, 86400)  # パネルは 10〜3600 に収める。収め�
 FUTURE_DAYS = 60
 SCHEDULE_PAST_DAYS = 7  # ダッシュボードの「直近の投薬予定」の範囲
 SCHEDULE_FUTURE_DAYS = 30
+MAX_OCCURRENCES = 200  # api.md: occurrences の上限。64 KiB 以内にも収まる (名前 40 文字・key 40 文字ほどで 1 件 250 バイト弱)
+
+# ゴミ収集カレンダー (local/garbage.json。Git の管理外)。dayOnly の回として薬の回に加えて返す。
+GARBAGE_FILE_MAX_BYTES = 256 * 1024
+GARBAGE_MAX_SERIES = 20
+GARBAGE_MAX_DATES = 800  # 1 系列あたり
+GARBAGE_ICON = "trash"
 BASE_DATE_RANGE = (date(2000, 1, 1), date(2099, 12, 31))
 
 NAME_MAX_CODEPOINTS = 40
@@ -55,6 +62,7 @@ PRESET_OCCURRENCES = {
 FETCHED_AGO = {"ok": 0, "stale": 2 * 86400, "fetchFailed": 3600, "reauthRequired": 86400}
 
 _DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+_GARBAGE_SERIES_ID_RE = re.compile(r"[a-z0-9]{1,16}")
 _ZONE_RE = re.compile(r"[A-Za-z_]+(?:/[A-Za-z0-9_+-]+)+")
 
 # api.md の White_Space の一覧
@@ -149,6 +157,7 @@ def initial_state(today):
         "fault": "none",
         "pollSeconds": 15,
         "timeZone": "Asia/Tokyo",
+        "garbage": True,
     }
 
 
@@ -199,10 +208,11 @@ def apply_update(state, update, today_for_zone):
         new["calendarId"] = _check_enum(update["calendarId"], CALENDARS)
     if "fault" in update:
         new["fault"] = _check_enum(update["fault"], FAULTS)
-    if "enabled" in update:
-        if not isinstance(update["enabled"], bool):
-            raise StateError("invalid value")
-        new["enabled"] = update["enabled"]
+    for flag in ("enabled", "garbage"):
+        if flag in update:
+            if not isinstance(update[flag], bool):
+                raise StateError("invalid value")
+            new[flag] = update[flag]
     if "leadDays" in update:
         new["leadDays"] = _check_int(update["leadDays"], LEAD_DAYS_RANGE)
     if "pastDays" in update:
@@ -240,8 +250,68 @@ def public_state(state):
     return {key: state[key] for key in STATE_KEYS}
 
 
-def occurrences_between(state, low, high):
-    """状態から返す回の一覧 (範囲 low .. high、両端を含む。日付・key の昇順)。"""
+class GarbageError(ValueError):
+    """ゴミ収集の定義が読めない。メッセージに中身は入れない。"""
+
+
+def parse_garbage(text):
+    """local/garbage.json の本文を検証し、系列の一覧 [(id, name, [date, ...])] を返す。
+
+    形: {"calendarName": ..., "dayOnly": true, "series": [{"id", "name", "dates": ["YYYY-MM-DD", ...]}]}。
+    全体が読めない (JSON でない・オブジェクトでない・series が配列でない) なら GarbageError。
+    外れた系列 (id が `[a-z0-9]{1,16}` でない・重複・名前が空・dates が配列でない) と外れた日付は捨てる。
+    名前は sanitize_name の規則 (送り手の規則) で整える。dates は昇順・重複なしにする。
+    """
+    try:
+        doc = json.loads(text, parse_constant=_reject_constant, object_pairs_hook=_no_duplicate_keys)
+    except (StateError, ValueError, RecursionError):
+        raise GarbageError("unreadable") from None
+    if not isinstance(doc, dict) or not isinstance(doc.get("series"), list):
+        raise GarbageError("unreadable")
+    result = []
+    seen = set()
+    for entry in doc["series"][:GARBAGE_MAX_SERIES]:
+        if not isinstance(entry, dict):
+            continue
+        sid, name, dates = entry.get("id"), entry.get("name"), entry.get("dates")
+        if not isinstance(sid, str) or not _GARBAGE_SERIES_ID_RE.fullmatch(sid) or sid in seen:
+            continue
+        if not isinstance(name, str) or not isinstance(dates, list):
+            continue
+        name = sanitize_name(name)
+        if not name:
+            continue
+        good = set()
+        for text_date in dates[:GARBAGE_MAX_DATES]:
+            try:
+                good.add(parse_date(text_date))
+            except StateError:
+                continue
+        seen.add(sid)
+        result.append((sid, name, sorted(good)))
+    return result
+
+
+def garbage_occurrences(series, low, high):
+    """ゴミ収集の回 (範囲 low .. high、両端を含む)。基準日・カレンダーの選択に左右されない絶対の日付。"""
+    result = []
+    for sid, name, dates in series:
+        for when in dates:
+            if low <= when <= high:
+                result.append({
+                    "key": "occ-gomi-%s-%s" % (sid, when.strftime("%Y%m%d")),
+                    "seriesId": "ser-gomi-%s" % sid,
+                    "name": name,
+                    "date": when.isoformat(),
+                    "icon": GARBAGE_ICON,
+                    "dayOnly": True,
+                })
+    return result
+
+
+def occurrences_between(state, low, high, garbage=()):
+    """状態から返す回の一覧 (範囲 low .. high、両端を含む。日付・key の昇順。最大 MAX_OCCURRENCES 件)。
+    `garbage` は parse_garbage の結果で、状態の garbage が true のときだけ薬の回に加える。"""
     base = date.fromisoformat(state["baseDate"])
     result = []
     for series, offset in PRESET_OCCURRENCES[state["preset"]]:
@@ -257,17 +327,19 @@ def occurrences_between(state, low, high):
             "date": when.isoformat(),
             "icon": icon,
         })
+    if state["garbage"]:
+        result.extend(garbage_occurrences(garbage, low, high))
     result.sort(key=lambda occ: (occ["date"], occ["key"]))
-    return result
+    return result[:MAX_OCCURRENCES]
 
 
-def occurrences_for(state, today):
+def occurrences_for(state, today, garbage=()):
     """機器向け API の回の一覧 (範囲 today-pastDays .. today+60、両端を含む)。"""
     return occurrences_between(state, today - timedelta(days=state["pastDays"]),
-                               today + timedelta(days=FUTURE_DAYS))
+                               today + timedelta(days=FUTURE_DAYS), garbage)
 
 
-def build_medications(state, today, now_epoch):
+def build_medications(state, today, now_epoch, garbage=()):
     """機器向け API の 200 の応答 (dict)。fault は扱わない。"""
     if not state["enabled"]:
         return {"enabled": False, "pollSeconds": state["pollSeconds"]}
@@ -277,11 +349,11 @@ def build_medications(state, today, now_epoch):
         body["timeZone"] = state["timeZone"]
         body["fetchedAt"] = max(0, int(now_epoch) - FETCHED_AGO[status])
     body["pollSeconds"] = state["pollSeconds"]
-    body["occurrences"] = [] if status == "notConnected" else occurrences_for(state, today)
+    body["occurrences"] = [] if status == "notConnected" else occurrences_for(state, today, garbage)
     return body
 
 
-def build_schedule(state, today, now_epoch):
+def build_schedule(state, today, now_epoch, garbage=()):
     """画面モックのダッシュボード用の世帯の予定 (dict)。機器の enabled・pastDays・fault に左右されない。
     範囲は今日の SCHEDULE_PAST_DAYS 日前から SCHEDULE_FUTURE_DAYS 日後 (両端を含む)。未接続は回を持たない。"""
     status = state["status"]
@@ -291,7 +363,7 @@ def build_schedule(state, today, now_epoch):
         return body
     body["fetchedAt"] = max(0, int(now_epoch) - FETCHED_AGO[status])
     body["occurrences"] = occurrences_between(state, today - timedelta(days=SCHEDULE_PAST_DAYS),
-                                              today + timedelta(days=SCHEDULE_FUTURE_DAYS))
+                                              today + timedelta(days=SCHEDULE_FUTURE_DAYS), garbage)
     return body
 
 

@@ -150,8 +150,18 @@ object MedicationsJson {
         val date = dateOf(map["date"] as? String ?: return null) ?: return null
         val days = ChronoUnit.DAYS.between(today, date)
         if (days < -PAST_DAYS || days > FUTURE_DAYS) return null
-        val icon = if (map["icon"] == "drop") MedIcon.DROP else MedIcon.PILL
-        return Occurrence(key, seriesId, name, icon, date)
+        val icon = when (map["icon"]) {
+            "drop" -> MedIcon.DROP
+            "trash" -> MedIcon.TRASH
+            else -> MedIcon.PILL
+        }
+        // dayOnly は省略・null が false。boolean でなければ型違いで、この回だけを除く。
+        val dayOnly = when (val raw = map["dayOnly"]) {
+            null -> false
+            is Boolean -> raw
+            else -> return null
+        }
+        return Occurrence(key, seriesId, name, icon, date, dayOnly)
     }
 
     private fun dateOf(text: String): LocalDate? {

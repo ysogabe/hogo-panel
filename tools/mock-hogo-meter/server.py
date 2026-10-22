@@ -30,6 +30,8 @@ UI_PORT = 8788
 DEVICE_ID = "mock-panel-1"
 SECRET_HEADER = "X-Mock-Device-Secret"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+# ゴミ収集の定義 (Git の管理外)。server.py の場所からの固定のパス。起動の引数・環境変数では変えられない。
+GARBAGE_PATH = Path(__file__).resolve().parent / "local" / "garbage.json"
 # 配るファイルは固定の一覧だけ。要求のパスからファイル名を組み立てない。
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -56,10 +58,31 @@ ERR_MISDIRECTED = {"error": "misdirected request"}
 ERR_INTERNAL = {"error": "internal error"}
 
 
+def load_garbage(path):
+    """ゴミ収集の定義を読む。系列の一覧、読めなければ None (ファイルが無い・大きすぎる・壊れている)。
+    中身も例外のメッセージも外に出さない。"""
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(mock_state.GARBAGE_FILE_MAX_BYTES + 1)
+        if len(raw) > mock_state.GARBAGE_FILE_MAX_BYTES:
+            return None
+        return mock_state.parse_garbage(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, mock_state.GarbageError):
+        return None
+
+
+def garbage_banner(app):
+    """起動時に出す 1 行。パスと、読めたか (読めたときは種類の数) だけ。中身は出さない。"""
+    if app.garbage is None:
+        return "  ゴミ収集     : %s を読めなかったので、ゴミ収集の予定は出しません" % app.garbage_path
+    return "  ゴミ収集     : %s を読みました (%d 種類。中身は表示しません)" % (app.garbage_path, len(app.garbage))
+
+
 class MockApp:
     """評価状態・要求の一覧・秘密。サーバー2つとスレッドで共有する。"""
 
-    def __init__(self, secret, device_id=DEVICE_ID, clock=time.time):
+    def __init__(self, secret, device_id=DEVICE_ID, clock=time.time, garbage_path=GARBAGE_PATH):
+        """`garbage_path` はテストがコードの中で差し替えるための引数。"""
         self.secret = secret
         self.device_id = device_id
         self.clock = clock
@@ -68,9 +91,15 @@ class MockApp:
         self._lock = threading.Lock()
         self._requests = collections.deque(maxlen=REQUEST_LOG_SIZE)
         self._state = mock_state.initial_state(mock_state.today_in_zone("Asia/Tokyo", clock()))
+        self.garbage_path = garbage_path
+        # ゴミ収集の系列。読めなかったら None (ゴミの回は出さない)。起動時に 1 回だけ読む。
+        self.garbage = load_garbage(garbage_path)
 
     def now(self):
         return self.clock()
+
+    def garbage_series(self):
+        return self.garbage if self.garbage is not None else ()
 
     def _today_for_zone(self, time_zone):
         return mock_state.today_in_zone(time_zone, self.now())
@@ -96,6 +125,7 @@ class MockApp:
                 "fault": list(mock_state.FAULTS),
             },
             "deviceId": self.device_id,
+            "garbageAvailable": self.garbage is not None,
             "today": mock_state.today_in_zone(state["timeZone"], now).isoformat(),
             "serverTime": int(now),
         }
@@ -104,13 +134,15 @@ class MockApp:
         """いまパネルが 200 で受ける本文 (fault は含めない)。画面モックの表示用。"""
         state = self.snapshot()
         now = self.now()
-        return mock_state.build_medications(state, mock_state.today_in_zone(state["timeZone"], now), now)
+        return mock_state.build_medications(state, mock_state.today_in_zone(state["timeZone"], now), now,
+                                            self.garbage_series())
 
     def schedule(self):
         """世帯の予定 (ダッシュボード用)。機器の enabled・pastDays・fault に関係しない。画面モックの表示用。"""
         state = self.snapshot()
         now = self.now()
-        return mock_state.build_schedule(state, mock_state.today_in_zone(state["timeZone"], now), now)
+        return mock_state.build_schedule(state, mock_state.today_in_zone(state["timeZone"], now), now,
+                                         self.garbage_series())
 
     def log_request(self, method, path, status, size, fault):
         """method・path は呼び出し側が固定の表示に伏せたものだけを渡す (要求の文字列をそのまま残さない)。"""
@@ -260,7 +292,8 @@ class Handler(BaseHTTPRequestHandler):
         if fault == "slow":
             app.stop.wait(app.slow_seconds)
         now = app.now()
-        body = mock_state.build_medications(state, mock_state.today_in_zone(state["timeZone"], now), now)
+        body = mock_state.build_medications(state, mock_state.today_in_zone(state["timeZone"], now), now,
+                                            app.garbage_series())
         if fault == "malformed":
             self._send(200, mock_state.malformed_body())
         elif fault == "deepNesting":
@@ -384,11 +417,12 @@ def main(device_port=DEVICE_PORT, ui_port=UI_PORT):
     threads = [threading.Thread(target=srv.serve_forever, daemon=True) for srv in (device, ui)]
     for thread in threads:
         thread.start()
-    print("Mock API を起動しました (評価用。架空のデータだけを返します)", flush=True)
+    print("Mock API を起動しました (評価用。薬の予定は架空のデータだけを返します)", flush=True)
     print("  機器向け API : http://%s:%d  (adb reverse で端末へ転送)" % (LISTEN_HOST, device.port), flush=True)
     print("  画面モック   : http://%s:%d  (端末へは転送しない)" % (LISTEN_HOST, ui.port), flush=True)
     print("  接続設定     : %s  (秘密を含む。終了時に消えます)" % config_path, flush=True)
     print("  端末へ書く   : tools/mock-hogo-meter/push-config.sh <serial> %s" % config_path, flush=True)
+    print(garbage_banner(app), flush=True)
     print("終了は Ctrl-C", flush=True)
     try:
         while not stop.wait(1):

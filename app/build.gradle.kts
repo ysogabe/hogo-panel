@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.ysogabe.hogo.panel"
         minSdk = 30
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.3.0"
+        versionCode = 7
+        versionName = "0.4.0"
     }
 
     compileOptions {

@@ -3,6 +3,7 @@ package io.github.ysogabe.hogo.panel
 import java.time.LocalDate
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -389,6 +390,52 @@ class MedicationsJsonTest {
         assertEquals(MedIcon.PILL, icon(""","icon":5"""))
         assertEquals(MedIcon.PILL, icon(""","icon":["drop"]"""))
         assertEquals(MedIcon.PILL, icon(""","icon":{"a":1}"""))
+    }
+
+    @Test
+    fun trashIconIsRead() {
+        val o = loaded(doc(list(occ(extra = ""","icon":"trash"""")))).occurrences.single()
+        assertEquals(MedIcon.TRASH, o.icon)
+        assertFalse(o.dayOnly)
+    }
+
+    @Test
+    fun dayOnlyDefaultsToFalseAndNullIsTheSameAsMissing() {
+        fun dayOnly(extra: String) = loaded(doc(list(occ(extra = extra)))).occurrences.single().dayOnly
+        assertTrue(dayOnly(""","dayOnly":true"""))
+        assertFalse(dayOnly(""","dayOnly":false"""))
+        assertFalse(dayOnly(""))
+        assertFalse(dayOnly(""","dayOnly":null"""))
+    }
+
+    @Test
+    fun wrongTypeDayOnlyExcludesOnlyThatOccurrence() {
+        for (bad in listOf("\"true\"", "1", "0", "[true]", "{}", "\"\"")) {
+            val r = loaded(doc(list(occ(key = "bad", extra = ",\"dayOnly\":$bad"), occ(key = "good"))))
+            assertEquals("dayOnly=$bad", listOf("good"), r.occurrences.map { it.key })
+            assertEquals(1, r.excludedCount)
+        }
+    }
+
+    @Test
+    fun dayOnlySampleIsReadAndWarnsOnlyOnTheDay() {
+        val r = loaded(sample("dayOnly"))
+        assertEquals(0, r.excludedCount)
+        assertEquals(6, r.occurrences.size)
+        val g = r.occurrences.first { it.key == "occ-gomi-sample1-20261022" }
+        assertEquals(MedIcon.TRASH, g.icon)
+        assertTrue(g.dayOnly)
+        assertFalse(r.occurrences.first { it.key == "occ-cal1-L-20261022" }.dayOnly)
+        val w = ReminderPolicy.warnings(r.occurrences, emptySet(), today, r.leadDays.toLong())
+        assertEquals(
+            setOf(
+                "occ-cal1-L-20261022" to Phase.TODAY,
+                "occ-gomi-sample1-20261022" to Phase.TODAY,
+                "occ-gomi-sample2-20261022" to Phase.TODAY,
+                "occ-cal1-F-20261024" to Phase.SOON,
+            ),
+            w.map { it.occurrence.key to it.phase }.toSet(),
+        )
     }
 
     @Test

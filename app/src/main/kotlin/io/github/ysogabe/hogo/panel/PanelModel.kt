@@ -157,12 +157,15 @@ class PanelModel(
     // ---- 表示用の導出 ----
 
     /**
-     * 警告の全件。段階（未確認 → 今日 → そろそろ）、同じ段階では予定日の順で、同順なら元の並び（系列の初出順）。
+     * 警告の全件。段階（未確認 → 今日 → そろそろ）、同じ段階では予定日の順、同じ日では薬（dayOnly でない）をゴミ収集など当日だけの回より先に、
+     * それでも同順なら元の並び（系列の初出順）。
      * 画面に出すのは先頭 [MAX_CARDS] 件（[shownWarnings]）。
      */
     fun warnings(): List<Warning> =
         ReminderPolicy.warnings(occurrences, doneKeys, today, leadDays)
-            .sortedWith(compareBy<Warning> { phaseRank(it.phase) }.thenBy { it.occurrence.scheduled })
+            .sortedWith(
+                compareBy<Warning> { phaseRank(it.phase) }.thenBy { it.occurrence.scheduled }.thenBy { it.occurrence.dayOnly },
+            )
 
     /** 薬カードに出す警告（最大 [MAX_CARDS] 件）。タップ・明滅・配置はこれに合わせる。 */
     fun shownWarnings(): List<Warning> = warnings().take(MAX_CARDS)

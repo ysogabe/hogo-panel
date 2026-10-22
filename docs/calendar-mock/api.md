@@ -54,7 +54,8 @@ X-Mock-Device-Secret: <評価用の値>
 | `seriesId` | string | 系列（繰り返し予定の元）。単発の予定は `key` と同じ値 | `key` と同じ文字の規則 | しない |
 | `name` | string | 薬名（予定の件名） | 1〜40 文字。長さは Unicode のコードポイントで数える（UTF-16 の単位ではない）。下の規則に外れる名前の回はパネルが除く | しない |
 | `date` | string | 予定日。`timeZone` での暦日。単日の終日予定を対象とする | `[0-9]{4}-[0-9]{2}-[0-9]{2}` に文字列全体が一致し、実在する日付 | しない |
-| `icon` | string | 薬のアイコン | `pill` / `drop`。省略時・知らない値・文字列でない値は `pill`。決め方は未決（PRD） | してよい |
+| `icon` | string | 薬のアイコン | `pill` / `drop` / `trash`（ゴミ。0.4.0 で追加）。省略時・知らない値・文字列でない値は `pill`。決め方は未決（PRD）。古いパネルは `trash` を知らない値として `pill` で出す | してよい |
+| `dayOnly` | boolean | `true` の回は、予定日の**当日だけ**警告する（ゴミ収集など）。0.4.0 で追加。下の[当日だけ出す回](#当日だけ出す回dayonly) | `true` / `false`。boolean でなければ型違い（その回だけを除く） | してよい（省略・`null` は `false`） |
 
 - `name` の規則:
   - 次のどれかなら、パネルはその回だけを除く: 一般カテゴリ Cc・Cf の文字を含む、対になっていないサロゲートを含む、すべての文字が Unicode の White_Space（空白だけ。U+0009〜000D・0020・0085・00A0・1680・2000〜200A・2028・2029・202F・205F・3000）、40 コードポイントを超える。
@@ -62,12 +63,22 @@ X-Mock-Device-Secret: <評価用の値>
   - 送り手（Mock・本番）は、前後の空白と Cc・Cf の文字を除き、40 コードポイントまでに切って送る。
 - `date` の判定: 正規表現に文字列全体が一致すること（Python は `re.fullmatch`、Kotlin は `matches()`。数字は ASCII の 0〜9 だけ）。そのうえで実在する日付であること（`2026-02-30` は不可）。
 
+### 当日だけ出す回（`dayOnly`）
+
+`dayOnly:true` の回は、パネルが**予定日の当日（`timeZone` での今日）だけ**警告する。段階は「今日」だけで、前日以前の予告（そろそろ）も、翌日以降の持ち越し（未確認）も出さない。応答の `leadDays` に関係しない。表示と操作は薬と同じ（同じカード、確認の「やった」で記録・取消。`key` が記録先）。
+
+- 系列ごとに、予定日が今日以前の最新の回だけを見る点と、実施済みの回を出さない点は、`dayOnly` でない回と同じ。今日の回が無い日（昨日の回だけがある日）は何も出さない。
+- 薬（`dayOnly` でない回）と同じ日に重なるときの並びは、段階 → 予定日 → 薬を先、の順。薬のカードは最大 2 枚で、3 件目以降は「ほか N 件」になる点も同じ。
+- 古いパネルは `dayOnly` を知らないキーとして無視し、薬と同じ扱い（`leadDays` 日前から予告し、翌日以降は未確認）になる。互換のために `dayOnly` は任意のキーで、v0 の他の規則は変えない。
+- 本番（hogo-meter）では、カレンダーごとの設定（当日だけ・警告日数）から作る想定（[CALENDAR_INTEGRATION.md](../CALENDAR_INTEGRATION.md)）。Mock は下の `occ-gomi-…` の回を `dayOnly:true` で返す。
+
 - `date` だけ epoch 秒にしない。終日の予定は時刻を持たない暦日で、epoch 秒にするとタイムゾーンの解釈がずれる余地が増える。複数日の予定・時刻付きの予定は、サーバーが開始日の単日の予定として渡す。
 - `key` の不変条件: 同じ回なら、再取得・件名の変更・予定日の移動・系列の一部の回だけの変更をしても変わらない（Google の回の ID が元の開始日から作られることを前提にする。本番の作り方は hogo-meter で確かめる）。別のカレンダーの同名の予定とは別の key になる。カレンダー ID をそのまま入れない（本番ではハッシュなどで伏せる）。
 - Mock の ID の作り方（架空の値）:
   - `key` は `occ-<カレンダー>-<系列>-<元の予定日 YYYYMMDD>`（例 `occ-cal1-F-20261024`）。
   - `seriesId` は `ser-<カレンダー>-<系列>`（例 `ser-cal1-F`）。
   - `<カレンダー>` は Mock の calendarId から作る。`mock-` を外してハイフンを除く（`mock-cal-1` → `cal1`、`mock-cal-2` → `cal2`）。カレンダーを切り替えると別の key になる。
+  - ゴミ収集（Mock の `local/garbage.json`）の回は、薬のカレンダー（`mock-cal-1`・`mock-cal-2`）の選択に関係しない別のカレンダーとして、`key` は `occ-gomi-<種類の id>-<予定日 YYYYMMDD>`（例 `occ-gomi-sa-20261022`）、`seriesId` は `ser-gomi-<種類の id>`、`icon` は `trash`、`dayOnly` は `true`。種類の id は `[a-z0-9]{1,16}`。予定日は基準日（preset）に左右されず、定義の絶対の日付のまま。
   - 単発の予定も同じ形で、カレンダーを含める（例 `occ-cal1-once-20261030`、系列は `once`）。単発の `seriesId` は `key` と同じ値。
 
 ## 返す回の範囲
@@ -136,6 +147,7 @@ Mock の確かめる順番: `Host`（421）→ パスの形（合わなければ
 - `date` が `[0-9]{4}-[0-9]{2}-[0-9]{2}` に文字列全体で一致しない（`matches()`）、または実在しない日付。
 - `name` が [上の規則](#occurrences-の要素)の除外に当たる（Cc・Cf を含む、対になっていないサロゲートを含む、空白だけ、40 コードポイントを超える）。
 - `date` が今日の −31〜+400 日の外。
+- `dayOnly` が（無い・`null` ではなく）boolean でない。
 
 ### 判定の順番
 
@@ -153,7 +165,9 @@ Mock の確かめる順番: `Host`（421）→ パスの形（合わなければ
 | 知らないキー（トップ・回の両方） | 無視する |
 | 値が `null` | 省略と同じ |
 | 知らない `status` | `fetchFailed` と同じ |
-| 知らない `icon`、`icon` なし、文字列でない `icon` | `pill` |
+| 知らない `icon`、`icon` なし、文字列でない `icon` | `pill`（`trash` は知っている値） |
+| `dayOnly` なし、`null` | `false` |
+| `dayOnly` が boolean でない（`"true"`・`1`・配列など） | 型違い。その回だけを除く（他の回のキーの型違いと同じ） |
 | 整数のキーに、小数・指数・文字列の数字・範囲外の整数（`leadDays`・`pollSeconds` は 32 ビット符号付き、`fetchedAt` は 0〜2^53−1 の外）を入れた | 型違い。`leadDays` なら全体の失敗。`pollSeconds`・`fetchedAt` の型違いは、そのキーを省いたものとして扱う（全体の失敗にしない）。範囲内で 10〜3600 の外の `pollSeconds` は型違いではなく、パネルが収める |
 
 ## 見本
@@ -163,6 +177,7 @@ Mock の確かめる順番: `Host`（421）→ パスの形（合わなければ
 | ファイル | 内容 |
 |---|---|
 | [`ok.json`](../../app/src/test/resources/api/medications/ok.json) | `ok`。3 系列（フィラリア F・フロントライン L・40 文字の長い薬名 M）の毎月の回と、単発の回（`occ-cal1-once-20261030`）。未確認（前日）・今日・そろそろ（2 日後）を含む。`leadDays` 2 |
+| [`dayOnly.json`](../../app/src/test/resources/api/medications/dayOnly.json) | `ok`。薬（フロントライン L・フィラリア F）に、架空のごみ（`occ-gomi-sample1-…`・`occ-gomi-sample2-…`、`icon: trash`・`dayOnly: true`）を足した例。今日（10-22）にフロントラインと 2 種類のごみが重なり、前日（10-21）と翌日（10-23）のごみは出ない。ID・名前は架空 |
 | [`stale.json`](../../app/src/test/resources/api/medications/stale.json) | `stale`。最後に取れてから日が経った例 |
 | [`fetchFailed.json`](../../app/src/test/resources/api/medications/fetchFailed.json) | `fetchFailed`。前回取れた一覧を返す |
 | [`reauthRequired.json`](../../app/src/test/resources/api/medications/reauthRequired.json) | `reauthRequired`。前回取れた一覧を返す |
