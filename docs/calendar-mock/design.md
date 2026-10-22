@@ -128,7 +128,7 @@ API の文書は [`docs/calendar-mock/api.md`](api.md) に置き（応答の見�
 
 `MedicationsJson.parse(text, today)` は次を全体の失敗（`Failed(INVALID)`）にする: JSON として読めない、入れ子の深さが 8 を超える（解析の前に数える。JSON の文字列の中の括弧とエスケープは数えない）、64 KiB を超える、`enabled` が無い・boolean でない、`enabled:true` なのに `status`・`leadDays`・`occurrences` が無いか型が違う、`leadDays` が 0〜14 の外、`timeZone` が IANA 名として読めない、`occurrences` が 200 件を超える、`key` が重複する。
 
-個々の回で、`key`・`seriesId`・`name`・`date` が欠ける・型や規則に合わない・`date` が `^\d{4}-\d{2}-\d{2}$` でない・今日の −31〜+400 日の外、のどれかなら、その回だけを除く（1件のおかしな件名で全部を使えなくしない）。除いた件数は数えるが画面には出さない（ログにだけ件数を出す）。
+個々の回で、`key`・`seriesId`・`name`・`date` が欠ける・型や規則に合わない・`date` が `^\d{4}-\d{2}-\d{2}$` でない・今日の −31〜+400 日の外、のどれかなら、その回だけを除く（1件のおかしな件名で全部を使えなくしない）。除いた件数は数えるが画面には出さない（ログにだけ件数を出す）。`name` の長さは Unicode のコードポイントで数え（Mock とパネルで同じ）、空白だけ・制御文字を含む名前も除く。パネルは名前を整形しない。任意のキー `pollSeconds`・`fetchedAt` の型違いは、そのキーを省いたものとして扱う（全体の失敗にしない）。`enabled:false` の応答の `fetchedAt` は読まない。
 
 ```kotlin
 enum class FetchError { NETWORK, TIMEOUT, HTTP_401, HTTP_404, HTTP_OTHER, REDIRECT, NOT_JSON, TOO_LARGE, INVALID }
