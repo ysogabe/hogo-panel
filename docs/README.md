@@ -15,6 +15,7 @@
 - [calendar-mock/design.md](calendar-mock/design.md): Mock API・パネルの取得・画面モックの設計。
 - [calendar-mock/api.md](calendar-mock/api.md): 機器向け API（案 v0）と、パネルの検証・失敗の分類。
 - [calendar-mock/tasks.md](calendar-mock/tasks.md): 実装のタスクと進み具合。
+- [calendar-mock/verification.md](calendar-mock/verification.md): 実機（Wi-Fi ADB の Show 5）とブラウザでの評価の記録（2026-10-22、スクリーンショット付き）。
 - [CALENDAR_INTEGRATION.md](CALENDAR_INTEGRATION.md): Google カレンダー連携 PoC の配置検討（hogo-meter に接続と設定を置く案）。
 
 ここでいう「既存アプリで確認済み」は Miharashi Panel の記録を指します。Hogo Panel と新しい Echo Show 5 での動作確認は、まだ行っていません。待機時計の仕様を引き継ぐことと、その実装が本リポジトリに存在することは区別してください。

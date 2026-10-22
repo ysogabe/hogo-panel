@@ -152,7 +152,7 @@ sealed interface ScheduleResult {
 | → `Loaded(notConnected)` | 空にする | 応答の値・端末のゾーン | 「カレンダー未接続」 |
 | → `Disabled` | 空にする | そのまま | 薬カード・時計の札・状態を出さない |
 | → `Failed`（前に `Loaded` あり） | 残す | 残す | 「予定を取得できません」 |
-| → `Failed`（一度も応答を受け取れていない＝未取得） | 空のまま | そのまま | 「予定を未取得（通信できません）」。以後も失敗が続くあいだ同じ。成功（`Loaded`・`Disabled`）で消える |
+| → `Failed`（成功の結果（`Loaded`・`Disabled`）を一度も受けていない＝未取得） | 空のまま | そのまま | 「予定を未取得（通信できません）」。以後も失敗が続くあいだ同じ。成功（`Loaded`・`Disabled`）で消える |
 | → `Failed`（`Disabled` の後） | 空のまま | そのまま | 「予定を取得できません」（表示オフの結果は受け取り済みなので「未取得」とは出さない。薬は出ない） |
 | 接続設定の誤り | 空 | 2・端末のゾーン | 「接続設定を確認してください」、取得しない |
 
@@ -166,7 +166,7 @@ sealed interface ScheduleResult {
 
 - URL は `<baseUrl>/api/agent/<deviceId>/medications`。`deviceId` は URL エンコードする。
 - 接続 5 秒、読み取り 1 回 10 秒。全体 15 秒は `ScheduleFetcher` の見張りで守る（読み取りの間隔が短い遅い応答でも止まらない）。
-- `instanceFollowRedirects = false`。3xx は `REDIRECT`。`Content-Type` の種類が（大文字・小文字を区別せず、`; charset=` などを除いて）`application/json` でなければ `NOT_JSON`。
+- `instanceFollowRedirects = false`。3xx は `REDIRECT`。200 の場合に `Content-Type` の種類が（大文字・小文字を区別せず、`; charset=` などを除いて）`application/json` でなければ `NOT_JSON`。
 - 読んだバイト数を数えて 64 KiB で打ち切る（`Content-Length` を信じない）。2xx 以外の本文は読まない。
 - `fetch()` は `Throwable` まで捕まえて `Failed` にする。`Failed` には決まった種類だけを入れ、例外のメッセージ・URL・ヘッダーをログに出さない。
 
@@ -263,7 +263,7 @@ adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel rm files/api-config.j
 
 ## リスクと対策
 
-- **adb reverse が切れる:** 端末の再接続でポート転送が消える。README に再設定の手順を書く。パネルは「予定を取得できません」（一度も取れていないときは「予定を未取得（通信できません）」）を出して前回の予定で動き、転送が戻れば次の取得で回復する（実機で確かめる）。
+- **adb reverse が切れる:** 端末の再接続でポート転送が消える。README に再設定の手順を書く。パネルは「予定を取得できません」（成功の結果を一度も受けていないときは「予定を未取得（通信できません）」）を出して前回の予定で動き、転送が戻れば次の取得で回復する（実機で確かめる）。
 - **取得中に画面が止まる:** 通信は必ず作業用スレッド。メインスレッドでは待たない。Mock の `slow` は `ThreadingHTTPServer` なので画面モックは止まらない。
 - **既存テストの前提（警告日数 2・シナリオ日付）が崩れる:** 判定関数は初期値の引数を 2 にし、シナリオモードの動きを変えない。
 - **PC と端末の時計がずれる:** 基準日は PC の日付、判定は端末の日付。評価の前に両方の日付を確かめる手順を README に書く。
