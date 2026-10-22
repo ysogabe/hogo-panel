@@ -8,7 +8,7 @@ PC 上の Mock API（Python 標準ライブラリ）が、hogo-meter に足す�
 
 ```mermaid
 flowchart LR
-  B[ブラウザ\n画面モック・評価用の切り替え] -- HTTP 127.0.0.1:8787 --> M[Mock API\ntools/mock-hogo-meter/server.py\nメモリ内の状態]
+  B[ブラウザ\n画面モック・評価用の切り替え] -- HTTP 127.0.0.1:8788 --> M[Mock API\ntools/mock-hogo-meter/server.py\nメモリ内の状態]
   P[Show 5 パネル\nHttpScheduleSource] -- adb reverse tcp:8787 --> M
 ```
 
@@ -21,13 +21,14 @@ flowchart LR
 - すべてメインスレッドの `Handler` で動く（`PanelRoot.kt:25`）。`pause()` で `removeCallbacksAndMessages(null)`（`PanelRoot.kt:54-64`）。毎分の `PanelTimer.TICK` は時計に入ると取り消される（`PanelController.kt:254`, `:295`）。明滅の予約は Controller の非公開 `syncTimers()`（`PanelController.kt:277`, `:316`）。
 - 薬カードの配置は1〜2枚を前提にした高さ（`PanelLayout.kt:50`、アイコン 64px `PanelView.kt:87`）。時計の札は折り返し・幅の制限が無い（`FlipClockView.kt:173`）。
 - 権限・ネットワーク設定・依存ライブラリは無い（JUnit だけ）。`android.useAndroidX=false`。JVM の単体テストでは Android の `org.json` はスタブになる。
-- 常設の Show 5 には `scripts/install.sh` で debug APK を入れ、Wi-Fi ADB も使う（[BUILD.md](../BUILD.md)）。Android 11（LineageOS 18.1）の Show 5 で、debug アプリへの `adb shell run-as <package>` が使えることを 2026-10-22 に確認した（`sh -c` の作業場所は `/` なので絶対パスで書く）。
+- 常設の Show 5 には `scripts/install.sh` で debug APK を入れ、Wi-Fi ADB も使う（[BUILD.md](../BUILD.md)）。Android 11（LineageOS 18.1）の Show 5 で、debug アプリへの `adb shell "run-as <package> sh -c '…'"` が使え、標準入力も渡せることを 2026-10-22 に確認した（端末側のコマンド全体を引用で囲む。作業場所はアプリのデータ領域）。
 - hogo-meter の機器向け API の一般的な作法（c6c14d6 で確認）: camelCase、時刻は UTC epoch 秒、エラーは JSON の `error` とステータス、対象外の任意キーは省く。ダッシュボードは明るい配色（背景 `#FBF7F0`、カード白、本文 `#2D2A26`、主色 `#C68B3E`、成功 `#7A9E7E`、警告 `#C0614A`、境界 `#E0D8CC`）、白い角丸カード、見出しは丸ゴシック。世帯の設定は縦並びのカード、機器の設定はデバイス詳細の「設定」タブ、トップはヘッダーの下にデバイスカードのグリッド。認証方式の詳細は連携元の文書を正とし、ここには書かない。
 
 ## 方針
 
 - **Mock API は Python 3 の標準ライブラリだけ**（`http.server` の `ThreadingHTTPServer`、`json`、`unittest`）。PC に追加のインストールが要らず、Android のビルドと独立する。
-- **パネルの届き方は `adb reverse tcp:8787 tcp:8787`。** パネルは `http://127.0.0.1:8787` に繋ぐ。LAN 上で Mock API を待ち受けなくて済む。平文の HTTP は debug ビルドの network security config で 127.0.0.1 と localhost だけに許す。
+- **パネルの届き方は `adb reverse tcp:8787 tcp:8787`。** パネルは `http://127.0.0.1:8787` に繋ぐ。LAN 上で Mock API を待ち受けなくて済む。平文の HTTP は debug ビルドの network security config で 127.0.0.1 だけに許す。
+- **待ち受けを2つに分ける。** 8787 は機器向け API（`/api/agent/*`）だけで、これだけを `adb reverse` で端末へ転送する。画面モックと評価用の `/mock/*` は転送しない 8788 に置き、端末内のアプリから評価状態を変えられないようにする。
 - **接続設定は `run-as` で書くファイル。** exported な Activity の起動 intent は他のアプリからも送れるので使わない。`run-as` は shell からだけ使え、秘密の値もコマンド行に出ない。
 - **予定日は Mock API が基準日から作る。** 基準日は予定の並びを選んだ時点の日付で、選び直すまで変えない。パネルは端末の本当の日付（API のタイムゾーンでの日付）で判定するので、日付が進めば「そろそろ」→「今日」→「未確認」と自然に変わる。評価のためにパネルの日付を偽らない。
 - **パネルは接続設定があるときだけ API を使う。** 無ければ今のシナリオの操作モックのまま。単体テスト112件の前提を壊さない。
@@ -47,7 +48,8 @@ flowchart LR
 
 ```
 tools/mock-hogo-meter/
-  server.py          # HTTP サーバー（API・画面モック・評価用エンドポイント）。127.0.0.1:8787 固定
+  server.py          # HTTP サーバー。127.0.0.1:8787（機器向け API だけ）と 127.0.0.1:8788（画面モック・評価用）に固定
+  push-config.sh     # 接続設定を端末へ書く（シリアル必須。秘密の値をコマンド行に出さない）
   mock_state.py      # 評価状態と、状態から応答を作る純粋関数（基準日・今日を引数で受ける）
   static/index.html, mock.css, mock.js   # 画面モック（1ページ、タブで切り替え）
   test_mock_state.py, test_server.py     # unittest
@@ -65,10 +67,10 @@ docs/calendar-mock/api.md, verification.md
 
 パネルのデータの流れ:
 
-1. `MainActivity.onCreate` が `ApiConfig.load(filesDir)` を呼ぶ。ファイルが無ければシナリオモード。あれば API モードで、`ScheduleFetcher` を作って `PanelRoot` に渡す。ファイルがあるのに不正なら API モードのまま「接続設定の誤り」を出し、取得しない（黙ってシナリオに戻さない）。設定の変更は `am force-stop` の後に起動し直して反映する。
-2. `ScheduleFetcher` は `resume` で即時に1回取得し、以後は「前の取得が終わってから」次を予約する。間隔は成功時は応答の `pollSeconds`（無ければ 300 秒）、失敗時は最後に分かった `pollSeconds`（無ければ 30 秒）。取得は同時に1件だけ。`pause` と `onDetachedFromWindow` で世代番号を進めて予約を消し、作業中の要求の結果は捨てる。止めている間は再予約しない。
+1. `MainActivity.onCreate` が `ApiConfig.load(filesDir)` を呼ぶ。ファイルが無ければシナリオモード。API モードではシナリオ選択・リセットのメニューを出さず（ヘッダーの長押しは何もしない）、`PanelModel.perform` もシナリオの操作を拒否する。あれば API モードで、`ScheduleFetcher` を作って `PanelRoot` に渡す。ファイルがあるのに不正なら API モードのまま「接続設定の誤り」を出し、取得しない（黙ってシナリオに戻さない）。設定の変更は `am force-stop` の後に起動し直して反映する。
+2. `ScheduleFetcher` は `resume` で即時に1回取得し、取得を始めるたびに 15 秒後の見張りを自分の Handler に予約する（時間が来たら世代番号を進め、接続を切り、`Failed(TIMEOUT)` を渡す。接続・ヘッダー・本文のどこで止まっても効く）。以後は「前の取得が終わってから」次を予約する。間隔は成功時は応答の `pollSeconds`（無ければ 300 秒）、失敗時は最後に分かった `pollSeconds`（無ければ 30 秒）。取得は同時に1件だけ。`pause` と `onDetachedFromWindow` で世代番号を進めて予約を消し、作業中の要求の結果は捨てる。止めている間は再予約しない。
 3. 取得結果はメインスレッドで `PanelController.onSchedule(result)` に渡す。Controller は、指が触れている間は結果を1件だけ保留し、全ての指が離れたら反映する。反映では `PanelModel.applySchedule(result, today)` を呼び、明滅の予約（`syncTimers`）と時計の札（`PanelHost.updateClockBadges()` を新設）を合わせ、再描画する。無操作の時間は変えない。
-4. API モードでは、Controller が新しい `PanelTimer.DATE` を、ホームでも時計でも毎分予約する。API のタイムゾーン（未取得なら端末のゾーン）での今日を求め、変わっていれば `refreshDate` と 3 と同じ同期をする。`resume` でもすぐに求める。シナリオモードでは今までどおり（`DATE` を使わない）。
+4. API モードでは、Controller が新しい `PanelTimer.DATE` を、ホームでも時計でも毎分予約する。API のタイムゾーン（未取得なら端末のゾーン）での今日を求め、変わっていれば 3 と同じ保留の経路に通す（指が触れている間は保留し、離した後の操作の処理を終えてから、または取り消し後に `refreshDate` と同期をする）。`resume` でもすぐに求める。シナリオモードでは今までどおり（`DATE` を使わない）。
 
 ## インターフェース
 
@@ -102,7 +104,7 @@ API の文書は `docs/calendar-mock/api.md` に置き、以下を正とする�
 | `date` | string | 予定日 `YYYY-MM-DD`（`timeZone` での暦日。単日の終日予定を対象とする） |
 | `icon` | string | `pill` / `drop`。省略時と知らない値は `pill`。決め方は未決（PRD） |
 
-`key` の不変条件: 同じ回なら、再取得・件名の変更・予定日の移動・系列の一部の回だけの変更をしても変わらない（Google の回の ID が元の開始日から作られることを前提にする。本番の作り方は hogo-meter で確かめる）。別のカレンダーの同名の予定とは別の key になる。カレンダー ID をそのまま入れない（本番ではハッシュなどで伏せる）。Mock の key は `occ-<系列>-<元の予定日>` の架空の値。
+`key` の不変条件: 同じ回なら、再取得・件名の変更・予定日の移動・系列の一部の回だけの変更をしても変わらない（Google の回の ID が元の開始日から作られることを前提にする。本番の作り方は hogo-meter で確かめる）。別のカレンダーの同名の予定とは別の key になる。カレンダー ID をそのまま入れない（本番ではハッシュなどで伏せる）。Mock の key は `occ-<カレンダー>-<系列>-<元の予定日>`（例 `occ-cal1-F-20261024`）の架空の値で、カレンダーを切り替えると別の key になる。
 
 `date` だけ epoch 秒にしない理由: 終日の予定は時刻を持たない暦日で、epoch 秒にするとタイムゾーンの解釈がずれる余地が増える。複数日の予定・時刻付きの予定は、サーバーが開始日の単日の予定として渡す。
 
@@ -124,7 +126,7 @@ API の文書は `docs/calendar-mock/api.md` に置き、以下を正とする�
 
 ### パネルの検証と状態遷移
 
-`MedicationsJson.parse(text, today)` は次を全体の失敗（`Failed(INVALID)`）にする: JSON として読めない、入れ子の深さが 8 を超える（解析の前に数える）、64 KiB を超える、`enabled` が無い・boolean でない、`enabled:true` なのに `status`・`leadDays`・`occurrences` が無いか型が違う、`leadDays` が 0〜14 の外、`timeZone` が IANA 名として読めない、`occurrences` が 200 件を超える、`key` が重複する。
+`MedicationsJson.parse(text, today)` は次を全体の失敗（`Failed(INVALID)`）にする: JSON として読めない、入れ子の深さが 8 を超える（解析の前に数える。JSON の文字列の中の括弧とエスケープは数えない）、64 KiB を超える、`enabled` が無い・boolean でない、`enabled:true` なのに `status`・`leadDays`・`occurrences` が無いか型が違う、`leadDays` が 0〜14 の外、`timeZone` が IANA 名として読めない、`occurrences` が 200 件を超える、`key` が重複する。
 
 個々の回で、`key`・`seriesId`・`name`・`date` が欠ける・型や規則に合わない・`date` が `^\d{4}-\d{2}-\d{2}$` でない・今日の −31〜+400 日の外、のどれかなら、その回だけを除く（1件のおかしな件名で全部を使えなくしない）。除いた件数は数えるが画面には出さない（ログにだけ件数を出す）。
 
@@ -160,8 +162,8 @@ sealed interface ScheduleResult {
 ### 通信（`HttpScheduleSource`）
 
 - URL は `<baseUrl>/api/agent/<deviceId>/medications`。`deviceId` は URL エンコードする。
-- 接続 5 秒、読み取り 1 回 10 秒、全体 15 秒（読み取りのループの中で確かめ、超えたら `disconnect()`）。
-- `instanceFollowRedirects = false`。3xx は `REDIRECT`。`Content-Type` が `application/json` でなければ `NOT_JSON`。
+- 接続 5 秒、読み取り 1 回 10 秒。全体 15 秒は `ScheduleFetcher` の見張りで守る（読み取りの間隔が短い遅い応答でも止まらない）。
+- `instanceFollowRedirects = false`。3xx は `REDIRECT`。`Content-Type` の種類が（大文字・小文字を区別せず、`; charset=` などを除いて）`application/json` でなければ `NOT_JSON`。
 - 読んだバイト数を数えて 64 KiB で打ち切る（`Content-Length` を信じない）。2xx 以外の本文は読まない。
 - `fetch()` は `Throwable` まで捕まえて `Failed` にする。`Failed` には決まった種類だけを入れ、例外のメッセージ・URL・ヘッダーをログに出さない。
 
@@ -169,23 +171,25 @@ sealed interface ScheduleResult {
 
 ```
 adb -s <serial> reverse tcp:8787 tcp:8787
-adb -s <serial> shell run-as io.github.ysogabe.hogo.panel \
-  sh -c 'mkdir -p /data/data/io.github.ysogabe.hogo.panel/files && cat > /data/data/io.github.ysogabe.hogo.panel/files/api-config.json' < api-config.json
+tools/mock-hogo-meter/push-config.sh <serial>   # 中で次を行う
+#   adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel sh -c 'umask 077; mkdir -p files && cat > files/api-config.json.tmp && mv files/api-config.json.tmp files/api-config.json'" < <設定ファイル>
+#   adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel ls -l files/"   # 中身は表示しない
 adb -s <serial> shell am force-stop io.github.ysogabe.hogo.panel
 adb -s <serial> shell am start -n io.github.ysogabe.hogo.panel/.MainActivity
 # 解除
-adb -s <serial> shell run-as io.github.ysogabe.hogo.panel rm /data/data/io.github.ysogabe.hogo.panel/files/api-config.json
+adb -s <serial> shell "run-as io.github.ysogabe.hogo.panel rm files/api-config.json"
 ```
 
-`api-config.json` は Mock API が起動時に PC の一時ディレクトリへ書き出す（`{"baseUrl":"http://127.0.0.1:8787","deviceId":"mock-panel-1","secret":"<起動ごとの乱数>"}`、権限 0600）。手で秘密の値を打たない。
+`api-config.json` は Mock API が起動時に書き出す（`{"baseUrl":"http://127.0.0.1:8787","deviceId":"mock-panel-1","secret":"<起動ごとの乱数>"}`）。秘密の値は `secrets.token_urlsafe(32)`。`tempfile.mkdtemp()`（0700・推測できない名前）の中に `O_CREAT|O_EXCL`・0600 で作り、Ctrl-C・SIGTERM・`atexit` で消す。起動時にはファイルのパスと `push-config.sh` の使い方だけを表示し、秘密の値は表示しない。異常終了で残っても、値は起動ごとに変わるので使えない。手で秘密の値を打たない。`adb shell -t`（疑似端末で入力が画面に出る）は使わない。端末側の作業場所はアプリのデータ領域で、0700 の領域に置かれる。
 
-`ApiConfig` の検証: 3つのキーがすべてそろう。`baseUrl` は `http://127.0.0.1:<port>` か `http://localhost:<port>` だけ（パスなし）。`deviceId` は `[A-Za-z0-9_-]{1,64}`。`secret` は 16〜256 文字の印字可能 ASCII。ファイルは 4 KiB まで。一つでも外れたら「接続設定の誤り」。
+`ApiConfig` の検証: 3つのキーがすべてそろう。`baseUrl` は `http://127.0.0.1:<port>` だけ（パスなし）。`deviceId` は `[A-Za-z0-9_-]{1,64}`。`secret` は 16〜256 文字の印字可能 ASCII。ファイルは 4 KiB まで。一つでも外れたら「接続設定の誤り」。ログにはどの規則に外れたかだけを出し、値は出さない。
 
 ### Mock API の評価用エンドポイントと画面モック
 
-- `GET /` 画面モック（`static/index.html`）、`GET /static/mock.css`、`GET /static/mock.js`。配るファイルは固定の一覧だけで、パスからファイル名を組み立てない。
+- 8787: `GET /api/agent/{deviceId}/medications` だけ。他のパスは 404。
+- 8788: `GET /` 画面モック（`static/index.html`）、`GET /static/mock.css`、`GET /static/mock.js`。配るファイルは固定の一覧だけで、パスからファイル名を組み立てない。
 - `GET /mock/state`、`POST /mock/state`（JSON で部分更新）、`GET /mock/requests`（パネルからの直近 50 件の要求: 時刻・パス・ステータス・応答のバイト数）。秘密の値は状態にも要求の一覧にも入れない。
-- すべての要求で `Host` が `127.0.0.1:8787` か `localhost:8787` でなければ 421。POST は `Origin` が同じもの（`http://127.0.0.1:8787` か `http://localhost:8787`）だけ、無ければ 403。`Content-Type: application/json` 必須、本文は 16 KiB まで。`json.loads` で NaN・Infinity を拒み、知らないキー・型違い（`bool` を整数として受けない）は 400。
+- すべての要求で `Host` がそのポートの `127.0.0.1:<port>` か `localhost:<port>` でなければ 421。8788 の POST は `Origin` が同じもの（`http://127.0.0.1:8788` か `http://localhost:8788`）だけ、無ければ 403。`Content-Type: application/json` 必須、本文は 16 KiB まで。`json.loads` で NaN・Infinity を拒み、知らないキー・型違い（`bool` を整数として受けない）は 400。
 - 秘密の値の比較は `hmac.compare_digest`。`log_message` を上書きし、ヘッダーと例外の中身を出さない。待ち受けアドレスを変える起動オプションは作らない。
 - 評価状態（初期値）: `preset`（`normal`）、`baseDate`（起動日。`preset` を選ぶと今日に更新。日付を直接指定もできる）、`status`（`ok`）、`calendarId`（`mock-cal-1`）、`enabled`（true）、`leadDays`（2）、`pastDays`（7）、`fault`（`none` / `unauthorized` / `serverError` / `slow`（12 秒待つ）/ `malformed` / `deepNesting`）、`pollSeconds`（15）、`timeZone`（`Asia/Tokyo`）。
 - 画面モックの上部に、点線で囲んだ評価用の切り替え欄（「評価用（本番には無い）」と明記）と要求の一覧を置く。各タブには、画面ごとの期待表示を小さく添える。
@@ -221,11 +225,11 @@ adb -s <serial> shell run-as io.github.ysogabe.hogo.panel rm /data/data/io.githu
 
 前提: 常設の Show 5 で動くのは debug APK で、Wi-Fi ADB（暗号化されない TCP）も開いている。「debug ビルドに限る」は release への混入を防ぐだけで、実機の守りにはならない。今回守れるのは「架空データ」と「起動ごとに変わる評価用の値」だけで、それで足りるように作る。
 
-- 接続設定は `run-as`（shell からだけ使える）でファイルに置く。exported な受け口を足さない。`baseUrl` は 127.0.0.1 / localhost の http だけを受け付け、他のアプリが接続先を差し替える経路を作らない。
-- `INTERNET` 権限と network security config は `app/src/debug` にだけ置く。config は `127.0.0.1` と `localhost` を `includeSubdomains="false"` で平文を許し、それ以外は既定（平文を許さない）。BUILD.md に、`assembleRelease` の APK を `aapt2 dump xmltree`（または `apkanalyzer manifest print`）で調べ、`INTERNET`・`networkSecurityConfig`・`usesCleartextTraffic` が無いことを確かめる手順を足す。
+- 接続設定は `run-as`（shell からだけ使える）でファイルに置く。exported な受け口を足さない。`baseUrl` は 127.0.0.1 の http だけを受け付け、他のアプリが接続先を差し替える経路を作らない。
+- `INTERNET` 権限と network security config は `app/src/debug` にだけ置く。config は `127.0.0.1` だけを `includeSubdomains="false"` で平文を許し、それ以外は既定（平文を許さない）。BUILD.md に、`assembleRelease` の APK を `aapt2 dump xmltree`（または `apkanalyzer manifest print`）で調べ、`INTERNET`・`networkSecurityConfig`・`usesCleartextTraffic` が無いことを確かめる手順を足す。
 - `adb reverse` が切れている間は、端末の 127.0.0.1:8787 を端末内の他のアプリが待ち受けられ、パネルは評価用の値をそこへ送り、偽の予定を受けうる。また Wi-Fi ADB の上の通信は LAN 上で平文。評価用の値は起動ごとに変わり、データも架空なので、今回は許容する。本番では localhost の平文に秘密を載せない。
-- Mock API: 127.0.0.1 だけで待ち受ける。Host と Origin を確かめる（DNS rebinding と CSRF への備え）。静的ファイルは固定の一覧。入力は型と範囲を厳しく確かめる。秘密の値は応答・状態・要求の一覧・ログに出さない。
-- パネル: 64 KiB・全体 15 秒・リダイレクトを追わない・入れ子の深さ・`Throwable` まで捕まえる。取得は同時に1件。`pollSeconds` は 10〜3600 に収める。
+- Mock API: 127.0.0.1 だけで待ち受ける。端末へ転送するのは機器向け API の 8787 だけで、評価状態を変える 8788 は端末内のアプリから届かない。Host と Origin を確かめる（ブラウザからの DNS rebinding と CSRF への備え。端末内のアプリはヘッダーを自由に付けられるので、これで守れるのはブラウザだけ）。静的ファイルは固定の一覧。入力は型と範囲を厳しく確かめる。秘密の値は応答・状態・要求の一覧・ログに出さない。
+- パネル: 64 KiB・全体 15 秒（見張り）・リダイレクトを追わない・入れ子の深さ・`Throwable` まで捕まえる。取得は同時に1件。`pollSeconds` は 10〜3600 に収める。
 - 公開してよい記録だけを残す: 検証記録・README では端末のシリアル・アドレス・ポート・PC のユーザー名やパス・評価用の値を `<serial>` などに置き換える。スクリーンショットは端末の画面・ブラウザのページ部分だけを切り出し、コミットの前に目で確かめる。見本の ID は `mock-cal-1`、`occ-…` のように一目で架空と分かる形にする。
 
 本番（hogo-meter）へ引き継ぐ注意（`CALENDAR_INTEGRATION.md` にも足す）:
@@ -241,14 +245,14 @@ adb -s <serial> shell run-as io.github.ysogabe.hogo.panel rm /data/data/io.githu
 | AC | 確かめ方 |
 |---|---|
 | AC1 | `api.md` と見本 JSON（`ok` / `stale` / `fetchFailed` / `reauthRequired` / `notConnected` / `disabled` / `error-401`）の突き合わせをレビューで確認 |
-| AC2 | `python3 -m unittest`（`tools/mock-hogo-meter`）: 見本と同じキー・型。基準日を固定して preset ごとの返す回（上の表）と、`pastDays`・範囲の境界。月末・年末・うるう日の基準日。`Content-Length` がバイト長。Host 違いが 421、Origin なし・違いの POST が 403、型違い・知らないキーが 400、`../` などのパスが 404。状態と要求の一覧に秘密の値が無い。待ち受けが 127.0.0.1 |
-| AC3 | `MedicationsJsonTest`: 見本ごとの読み取り、`leadDays=3` で 3 日前から警告、全体の失敗の各条件（深い入れ子を含む）、1件だけおかしな回の除外、知らないキー・知らない `status`・`icon` の扱い |
+| AC2 | `python3 -m unittest`（`tools/mock-hogo-meter`）: 見本と同じキー・型。カレンダーを切り替えると key が変わる。基準日を固定して preset ごとの返す回（上の表）と、`pastDays`・範囲の境界。月末・年末・うるう日の基準日。`Content-Length` がバイト長。Host 違いが 421、Origin なし・違いの POST が 403、8787 に `/mock/*` と画面が無い、一時ファイルが 0600 で作られ終了時に消える、型違い・知らないキーが 400、`../` などのパスが 404。状態と要求の一覧に秘密の値が無い。待ち受けが 127.0.0.1 |
+| AC3 | `MedicationsJsonTest`: 見本ごとの読み取り、`leadDays=3` で 3 日前から警告、全体の失敗の各条件（深い入れ子を含む。文字列の中の括弧は数えない）、1件だけおかしな回の除外、知らないキー・知らない `status`・`icon` の扱い |
 | AC3 | `ApiConfigTest`: 正しい設定、欠けたキー、`https://` や他のホスト、パス付き、短い秘密、大きすぎるファイル |
 | AC4 | 接続設定なしで既存の 112 件が通る（`./gradlew testDebugUnitTest`）。追加分は件数を分けて報告する |
 | AC5 | `PanelModelTest` に追加: 状態遷移の表の各行、確認中の差し替えで題名と記録先が変わらない、差し替え後も実施済みが残る、警告 3 件で 2 件と「ほか 1 件」 |
-| AC5, AC7 | `PanelControllerTest` に追加（偽の取得元・予約先・時計）: 指が触れている間の保留と離した後の反映、無操作の時間が変わらない、明滅の開始・停止、時計の札の更新 |
+| AC5, AC7 | `PanelControllerTest` に追加（偽の取得元・予約先・時計）: 指が触れている間の保留と離した後の反映（取得結果と日付の変更の両方）、API モードでシナリオの操作が拒否される、無操作の時間が変わらない、明滅の開始・停止、時計の札の更新 |
 | AC6 | `PanelControllerTest`: 時計の表示中に `DATE` で日付が変わり、そろそろ → 今日、時計の札も更新。`Failed` の後でも同じ |
-| AC7 | `ScheduleFetcherTest`（偽の Handler 相当とスレッドを注入）: 同時1件、止めた後の結果を捨てる、止めている間は予約しない、成功・失敗ごとの間隔、`pollSeconds` を 10〜3600 に収める |
+| AC7 | `ScheduleFetcherTest`（偽の Handler 相当とスレッドを注入）: 同時1件、15 秒の見張りで `Failed(TIMEOUT)`、止めた後の結果を捨てる、止めている間は予約しない、成功・失敗ごとの間隔、`pollSeconds` を 10〜3600 に収める |
 | AC8, AC9 | 手動: ブラウザで画面モックを操作し、`/mock/requests` と Show 5 の表示で反映を確認。各状態のスクリーンショットと対応表を `verification.md` に記録 |
 | AC10 | `PanelControllerTest`: API モードで時計からの最初のタッチが記録されない |
 
