@@ -9,6 +9,7 @@
 - [routine-ui/verification.md](routine-ui/verification.md): HTML 段階と Android 段階の確認記録。
 - [BUILD.md](BUILD.md): ビルド手順と、シリアルを明示した端末導入。
 - [KNOWLEDGE_HANDOFF.md](KNOWLEDGE_HANDOFF.md): 端末条件、Android の実装方針、導入・起動・通信・検証の知見。
+- [AMBIENT_BRIGHTNESS.md](AMBIENT_BRIGHTNESS.md): 現行0.5.0の全画面自動輝度の設計値・センサー確認・手で覆う実機手順と未検証範囲。
 - [IDLE_CLOCK.md](IDLE_CLOCK.md): 消灯に代わる低輝度フリップ時計の画面・遷移・更新・誤操作防止仕様。
 - [HOGO_METER_INTEGRATION.md](HOGO_METER_INTEGRATION.md): 連携の目的、参照先、実装前に決めること。
 - [calendar-mock/prd.md](calendar-mock/prd.md): 投薬予定の連携を評価する Mock API とパネルの取得の要求。

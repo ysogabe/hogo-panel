@@ -7,7 +7,7 @@ import android.view.WindowInsetsController
 import android.view.WindowManager
 
 /**
- * 通常はホーム、3 分の無操作か時計ボタンで時間帯別の輝度の時計。
+ * 通常はホーム、3 分の無操作か時計ボタンで時計。全画面で照度センサーに合わせた輝度。
  * 接続設定（`files/api-config.json`。`adb shell run-as` で置く）が無ければ、架空データだけの操作モック（通信しない）。
  * あれば API モードで、debug ビルドだけが 127.0.0.1 の Mock API から投薬予定を取る。
  */
@@ -46,7 +46,7 @@ class MainActivity : Activity() {
         if (hasFocus) hideSystemBars()
     }
 
-    /** 時計中だけ時間帯別のウィンドウ輝度。null（ホーム等）は端末の明るさ設定に戻す。同じ値では更新しない。 */
+    /** アプリのウィンドウ輝度。null は端末の明るさ設定に戻す。同じ値では更新しない。 */
     private fun applyBrightness(level: Float?) {
         val target = level ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         if (window.attributes.screenBrightness == target) return

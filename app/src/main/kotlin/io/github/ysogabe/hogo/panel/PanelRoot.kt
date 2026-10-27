@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
 class PanelRoot(
     context: Context,
     apiConfig: ApiConfig.Loaded,
-    /** 時計中のウィンドウ輝度。null は指定の解除（端末の明るさ設定に戻す）。 */
+    /** 全画面共通のウィンドウ輝度。null は端末の明るさ設定に戻す。 */
     private val onBrightness: (level: Float?) -> Unit,
 ) : FrameLayout(context), PanelHost {
     private val handler = Handler(Looper.getMainLooper())
@@ -45,16 +45,8 @@ class PanelRoot(
     private val home = PanelView(context, model, controller)
     private val clock = FlipClockView(context)
     private val timers = PanelTimer.entries.associateWith { timer -> Runnable { controller.onTimer(timer) } }
-    private val brightnessRunnable: Runnable = Runnable { brightness.onTimer() }
-    private val brightness: ClockBrightnessKeeper = ClockBrightnessKeeper(
-        localMillis = ::localNow,
-        apply = { onBrightness(it) },
-        schedule = { delayMs ->
-            handler.removeCallbacks(brightnessRunnable)
-            handler.postDelayed(brightnessRunnable, delayMs)
-        },
-        cancel = { handler.removeCallbacks(brightnessRunnable) },
-    )
+    private val brightness = WindowBrightnessController(context, ::localNow, onBrightness)
+    private var resumed = false
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
     /** API モードで設定が正しいときだけ。通信は作業用スレッドで、結果はメインスレッドで [PanelController.onSchedule] へ。 */
@@ -79,12 +71,16 @@ class PanelRoot(
     }
 
     fun resume() {
+        resumed = true
         controller.resume()
+        if (isAttachedToWindow) brightness.start()
         fetcher?.resume()
     }
 
     /** 描画・タイマー・コールバックを全て止める。 */
     fun pause() {
+        resumed = false
+        brightness.stop()
         fetcher?.pause()
         controller.pause()
         stopEverything()
@@ -107,6 +103,11 @@ class PanelRoot(
         handler.removeCallbacksAndMessages(null)
         brightness.stop()
         clock.stop()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (resumed) brightness.start()
     }
 
     override fun onDetachedFromWindow() {
@@ -141,14 +142,13 @@ class PanelRoot(
     }
 
     override fun onClockChanged(clockOn: Boolean) {
+        brightness.setClock(clockOn)
         if (clockOn) {
             clock.badges = model.clockBadges()
             home.visibility = INVISIBLE
             clock.visibility = VISIBLE
             clock.start()
-            brightness.start()
         } else {
-            brightness.stop()
             clock.stop()
             clock.visibility = GONE
             home.visibility = VISIBLE
