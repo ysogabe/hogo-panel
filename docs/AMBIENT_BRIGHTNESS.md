@@ -60,4 +60,8 @@ adb -s "$SERIAL" shell dumpsys window windows
 - 開発機で `./gradlew testDebugUnitTest assembleDebug lintDebug assembleRelease` が成功。単体テスト **313件、失敗0・スキップ0**。照度の補間・単調性・上下限・不正値、目標への収束・反転・微小変動、画面切替、未受信時の時計・ホーム、登録失敗、停止・重複開始・古いイベントと予約・再開の **21件** と、既存の時間帯判定 **3件** を含みます。旧時計専用 keeper の6件は共通制御のテストへ置き換えました。
 - lint は **エラー0・警告3**（既存の `DiscouragedApi`、`DataExtractionRules`、`MissingApplicationIcon`）。versionCode **8** / versionName **0.5.0**。
 - release APK の aapt2 検査で `uses-permission` なし（`WRITE_SETTINGS` / `INTERNET` なし）、`networkSecurityConfig` / `usesCleartextTraffic` / `debuggable` なしを確認しました。
-- **今回の実装担当は端末へ接続・導入・操作していません。** 手で覆った実際の応答、OS からのイベント配送と停止、切替時の見え方、照度と見やすさの対応、長時間のちらつき・残像・電力、release APK の実機動作は未確認で、導入担当者が上の手順で確認します。センサーのない／登録が失敗する Android 実機での確認も未実施です（単体テストで検証）。
+- 導入担当が対象の Echo Show 5 へ Wi-Fi ADB で debug APK 0.5.0 を上書き導入。35lux に対して指定輝度 0.23750001 へ段階的に到達し、DisplayPowerController でも同値と `mBrightnessReason=override` を確認しました。35〜36lux の小さな揺れでは指定値を維持しました。
+- 利用者がセンサーを手で覆って画面が暗くなったことを確認。ログでも35〜36luxから5/1/2/0luxへの低下と、輝度約0.24→0.215→0.115→0.06を確認しました。差0.02未満は採用しないため、1luxで採用した0.06が0luxでも維持されるのは設計どおりです。手を外した後に明るくなる側の実機ログは、この記録時点では未確認です。
+- ホーム・確認画面・時計をスクリーンショットで確認し、切替後も同じウィンドウ輝度と1つのセンサー購読を維持しました。HOMEで背面にすると接続0・ウィンドウ指定解除、前面復帰で再登録と新しいluxの受信を確認。システムの輝度値・自動調光モードは操作前後で同じで、取得した当該アプリのAndroidRuntimeログに例外はありませんでした。
+- 実装コミット `dc168a7`（基点 `f417d92`）を、実装担当Sol以外のCodex Astra（通常）・Terra（安全面）が静的レビューし、いずれも指摘なし。Claudeの利用上限のため、利用者承認のもとCodexへ切り替えました。Claude専用の `security-review` スキルの実行ではありません。
+- 照度と見やすさの対応、長時間のちらつき・残像・電力、release APKの実機動作は未確認です。センサーのない／登録が失敗するAndroid実機での確認も未実施です（単体テストで検証）。
