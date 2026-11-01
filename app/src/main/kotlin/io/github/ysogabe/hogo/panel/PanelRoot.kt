@@ -45,7 +45,10 @@ class PanelRoot(
     private val home = PanelView(context, model, controller)
     private val clock = FlipClockView(context)
     private val timers = PanelTimer.entries.associateWith { timer -> Runnable { controller.onTimer(timer) } }
-    private val brightness = WindowBrightnessController(context, ::localNow, onBrightness)
+    private val brightness = WindowBrightnessController(context, ::localNow, onBrightness) { factor ->
+        home.setContrast(factor)
+        clock.setContrast(factor)
+    }
     private var resumed = false
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 

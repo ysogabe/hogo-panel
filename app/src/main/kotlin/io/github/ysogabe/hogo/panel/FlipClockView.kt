@@ -13,6 +13,16 @@ import java.util.TimeZone
 
 /** 低輝度のフリップ時計。描画の予約は [start] から [stop] の間だけ行う。 */
 class FlipClockView(context: Context) : View(context) {
+    private var palette = ContrastPalette(0f)
+    fun setContrast(factor: Float) {
+        if (palette.factor == factor) return
+        palette = ContrastPalette(factor)
+        invalidate()
+    }
+    private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1f
+    }
     private val model = ClockModel()
     private var running = false
     private val tick = Runnable { onTick() }
@@ -109,14 +119,15 @@ class FlipClockView(context: Context) : View(context) {
         val badgeWidths = badgeWidths()
         val groupWidth = maxOf(ClockMath.CLOCK_WIDTH, badgeWidths.sum() + BADGE_SPACING * (badges.size - 1).coerceAtLeast(0))
         val max = ClockMath.maxOffsets(areaW, areaH, groupWidth, groupHeight)
-        val shade = ClockMath.shade(elapsed)
+        val shade = palette.clockShade(ClockMath.shade(elapsed))
         // 時刻・日付・札のまとまりを画面の中央に置き、そのまま動かす。
         val left = (areaW - ClockMath.CLOCK_WIDTH) / 2f + ClockMath.offsetX(elapsed, max[0])
         val top = (areaH - groupHeight) / 2f + ClockMath.offsetY(elapsed, max[1])
 
-        cardPaint.color = scaled(CARD_COLOR, shade)
-        digitPaint.color = scaled(DIGIT_COLOR, shade)
+        cardPaint.color = scaled(palette.clockCard(), shade)
+        digitPaint.color = scaled(palette.clockDigit(), shade)
         colonPaint.color = digitPaint.color
+        borderPaint.color = scaled(palette.clockBorder(), shade)
 
         canvas.save()
         canvas.scale(scale, scale)
@@ -178,9 +189,9 @@ class FlipClockView(context: Context) : View(context) {
 
     /** [centerX] を中心に、[top] から札を並べる。 */
     private fun drawBadges(canvas: Canvas, centerX: Float, top: Float, widths: List<Float>, shade: Float) {
-        badgeFill.color = scaled(BADGE_FILL, shade)
-        badgeStroke.color = scaled(BADGE_BORDER, shade)
-        badgeText.color = scaled(BADGE_TEXT, shade)
+        badgeFill.color = scaled(palette.badgeFill(), shade)
+        badgeStroke.color = scaled(palette.badgeBorder(), shade)
+        badgeText.color = scaled(palette.badgeText(), shade)
         val total = widths.sum() + BADGE_SPACING * (badges.size - 1)
         var x = centerX - total / 2f
         val metrics = badgeText.fontMetrics
@@ -220,6 +231,10 @@ class FlipClockView(context: Context) : View(context) {
                 drawHalf(canvas, left, top, now, upper = false, scaleY = s, dim = 0.6f * (1f - s))
             }
         }
+        if (palette.factor > 0f) canvas.drawRoundRect(
+            left + .5f, top + .5f, left + ClockMath.CARD_WIDTH - .5f,
+            top + ClockMath.CARD_HEIGHT - .5f, CORNER, CORNER, borderPaint,
+        )
         val midY = top + ClockMath.CARD_HEIGHT / 2f
         canvas.drawRect(left, midY - SEAM / 2f, left + ClockMath.CARD_WIDTH, midY + SEAM / 2f, seamPaint)
     }
@@ -262,17 +277,12 @@ class FlipClockView(context: Context) : View(context) {
     )
 
     private companion object {
-        const val CARD_COLOR = 0xFF161616.toInt()
-        const val DIGIT_COLOR = 0xFF707070.toInt()
         const val DIGIT_TEXT_SIZE = 221f
         const val DATE_TEXT_SIZE = 62f
         const val CORNER = 18f
         const val SEAM = 4f
         const val COLON_DOT = 18f
 
-        const val BADGE_FILL = 0xFF2D2818.toInt()
-        const val BADGE_BORDER = 0xFF786638.toInt()
-        const val BADGE_TEXT = 0xFFD9C17E.toInt()
         const val BADGE_TEXT_SIZE = 23f
         const val BADGE_PAD_X = 18f
 

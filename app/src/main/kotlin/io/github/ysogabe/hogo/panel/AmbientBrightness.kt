@@ -36,6 +36,7 @@ class AmbientBrightnessKeeper(
     /** 同時に一つだけ予約。cancel は古いコールバックも取り除く。 */
     private val schedule: (delayMs: Long, task: () -> Unit) -> Unit,
     private val cancel: () -> Unit,
+    private val onContrast: (Float) -> Unit = {},
 ) {
     private var active = false
     private var acceptingReadings = false
@@ -46,6 +47,8 @@ class AmbientBrightnessKeeper(
     private var applied: Float? = null
     private var target: Float? = null
     var latestLux: Float? = null
+        private set
+    var contrast: Float = 0f
         private set
     val isAtTarget: Boolean get() = target == applied
 
@@ -122,7 +125,15 @@ class AmbientBrightnessKeeper(
     }
 
     private fun update(level: Float?) {
-        if (level == applied) return
+        val nextContrast = ContrastPalette.factor(level, latestLux)
+        val contrastChanged = nextContrast != contrast
+        if (contrastChanged) {
+            contrast = nextContrast
+            onContrast(contrast)
+        }
+        // A first sensor sample can equal clock fallback brightness but change contrast.
+        // Deliver that change to the bridge too, so its debug log describes the actual palette.
+        if (level == applied && !contrastChanged) return
         applied = level
         apply(level)
     }
