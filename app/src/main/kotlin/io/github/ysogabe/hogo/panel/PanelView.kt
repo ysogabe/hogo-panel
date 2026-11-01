@@ -22,6 +22,13 @@ class PanelView(
     private val model: PanelModel,
     private val controller: PanelController,
 ) : View(context) {
+    private var palette = ContrastPalette(0f)
+    fun setContrast(factor: Float) {
+        if (palette.factor == factor) return
+        palette = ContrastPalette(factor)
+        invalidate()
+    }
+
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -82,7 +89,7 @@ class PanelView(
         val boxes = PanelLayout.medBoxes(warnings.size, more != null)
         warnings.forEachIndexed { i, w ->
             val box = boxes[i]
-            val s = MedStyle.of(w.phase)
+            val s = palette.med(w.phase)
             val t = if (PulseMath.animates(w.phase)) dim else 0f
             roundBox(
                 c, box, 20f,
@@ -360,61 +367,39 @@ class PanelView(
         c.restore()
     }
 
-    private class MedStyle(
-        val fill: Int,
-        val border: Int,
-        val text: Int,
-        val iconFill: Int,
-        val icon: Int,
-        val state: Int,
-    ) {
-        companion object {
-            private val soon = MedStyle(0xFF393326.toInt(), 0xFFA18B52.toInt(), 0xFFF5ECD5.toInt(), 0xFF574B2D.toInt(), 0xFFE9CF85.toInt(), 0xFFE8CC82.toInt())
-            private val today = MedStyle(0xFF473524.toInt(), 0xFFC49B53.toInt(), 0xFFFFF0D4.toInt(), 0xFF685032.toInt(), 0xFFF3D399.toInt(), 0xFFF4D08B.toInt())
-            private val late = MedStyle(0xFF422D28.toInt(), 0xFFB67866.toInt(), 0xFFF4DED3.toInt(), 0xFF634238.toInt(), 0xFFEDBAA4.toInt(), 0xFFECB49E.toInt())
-
-            fun of(p: Phase): MedStyle = when (p) {
-                Phase.TODAY -> today
-                Phase.LATE -> late
-                else -> soon
-            }
-        }
-    }
+    private val BG get() = palette.color(PanelColor.BG)
+    private val BG_ATTENTION get() = palette.color(PanelColor.BG_ATTENTION)
+    private val HEADER_ICON get() = palette.color(PanelColor.HEADER_ICON)
+    private val HEADER_NAME get() = palette.color(PanelColor.HEADER_NAME)
+    private val HEADER_TIME get() = palette.color(PanelColor.HEADER_TIME)
+    private val HEADER_BUTTON get() = palette.color(PanelColor.HEADER_BUTTON)
+    private val STATUS_TEXT get() = palette.color(PanelColor.STATUS_TEXT)
+    private val CARE_FILL get() = palette.color(PanelColor.CARE_FILL)
+    private val CARE_BORDER get() = palette.color(PanelColor.CARE_BORDER)
+    private val CARE_TEXT get() = palette.color(PanelColor.CARE_TEXT)
+    private val CARE_SUB get() = palette.color(PanelColor.CARE_SUB)
+    private val CARE_PLUS get() = palette.color(PanelColor.CARE_PLUS)
+    private val SCRIM get() = palette.color(PanelColor.SCRIM)
+    private val DIALOG_FILL get() = palette.color(PanelColor.DIALOG_FILL)
+    private val DIALOG_BORDER get() = palette.color(PanelColor.DIALOG_BORDER)
+    private val DIALOG_SYMBOL get() = palette.color(PanelColor.DIALOG_SYMBOL)
+    private val DIALOG_TITLE get() = palette.color(PanelColor.DIALOG_TITLE)
+    private val BUTTON_FILL get() = palette.color(PanelColor.BUTTON_FILL)
+    private val BUTTON_BORDER get() = palette.color(PanelColor.BUTTON_BORDER)
+    private val BUTTON_TEXT get() = palette.color(PanelColor.BUTTON_TEXT)
+    private val PRIMARY_FILL get() = palette.color(PanelColor.PRIMARY_FILL)
+    private val PRIMARY_TEXT get() = palette.color(PanelColor.PRIMARY_TEXT)
+    private val SELECTED_FILL get() = palette.color(PanelColor.SELECTED_FILL)
+    private val SELECTED_TEXT get() = palette.color(PanelColor.SELECTED_TEXT)
+    private val MENU_CAPTION get() = palette.color(PanelColor.MENU_CAPTION)
+    private val TOAST_FILL get() = palette.color(PanelColor.TOAST_FILL)
+    private val TOAST_TEXT get() = palette.color(PanelColor.TOAST_TEXT)
+    private val TOAST_UNDO get() = palette.color(PanelColor.TOAST_UNDO)
+    private val FOCUS get() = palette.color(PanelColor.FOCUS)
+    private val PRESS get() = palette.color(PanelColor.PRESS)
 
     private companion object {
-        const val BG = 0xFF181E1B.toInt()
-        const val BG_ATTENTION = 0xFF25231B.toInt()
-        const val HEADER_ICON = 0xFFB5C1AC.toInt()
-        const val HEADER_NAME = 0xFFC9D0C3.toInt()
-        const val HEADER_TIME = 0xFFA9B1A2.toInt()
-        const val HEADER_BUTTON = 0xFF949F8B.toInt()
-
-        /** 状態の行（ヘッダーの右、時刻の左）。名前「こむぎ」の右端から時刻の左端の手前まで。 */
-        const val STATUS_TEXT = 0xFFC0614A.toInt()
         const val STATUS_RIGHT = 752f
         const val STATUS_LEFT = 190f
-        const val CARE_FILL = 0xFF212A23.toInt()
-        const val CARE_BORDER = 0xFF354034.toInt()
-        const val CARE_TEXT = 0xFFD2DDCB.toInt()
-        const val CARE_SUB = 0xFF92A28A.toInt()
-        const val CARE_PLUS = 0xFF718A67.toInt()
-        const val SCRIM = 0xD9070C09.toInt()
-        const val DIALOG_FILL = 0xFF29332B.toInt()
-        const val DIALOG_BORDER = 0xFF56634F.toInt()
-        const val DIALOG_SYMBOL = 0xFFE3CD91.toInt()
-        const val DIALOG_TITLE = 0xFFEEF0E9.toInt()
-        const val BUTTON_FILL = 0xFF344231.toInt()
-        const val BUTTON_BORDER = 0xFF4A5A43.toInt()
-        const val BUTTON_TEXT = 0xFFC6D3BE.toInt()
-        const val PRIMARY_FILL = 0xFFD4DDA9.toInt()
-        const val PRIMARY_TEXT = 0xFF28371E.toInt()
-        const val SELECTED_FILL = 0xFFE5CC87.toInt()
-        const val SELECTED_TEXT = 0xFF30291A.toInt()
-        const val MENU_CAPTION = 0xFF9AAB92.toInt()
-        const val TOAST_FILL = 0xFFD9E6C8.toInt()
-        const val TOAST_TEXT = 0xFF2D3B22.toInt()
-        const val TOAST_UNDO = 0xFF354E29.toInt()
-        const val FOCUS = 0xFFAAC2ED.toInt()
-        const val PRESS = 0x22FFFFFF
     }
 }

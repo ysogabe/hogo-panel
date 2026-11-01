@@ -50,6 +50,7 @@ class AmbientBrightnessTest {
         var local = 12 * 3_600_000L + 30_000L
         val source = Source(available)
         val applied = mutableListOf<Float?>()
+        val contrasts = mutableListOf<Float>()
         var pending: (() -> Unit)? = null
         var delay: Long? = null
         var schedules = 0
@@ -57,7 +58,7 @@ class AmbientBrightnessTest {
             schedules++
             delay = ms
             pending = task
-        }, { pending = null; delay = null })
+        }, { pending = null; delay = null }, { contrasts += it })
         fun tick() {
             val task = checkNotNull(pending)
             pending = null
@@ -67,6 +68,68 @@ class AmbientBrightnessTest {
         fun settle() {
             repeat(100) { if (pending != null) tick() else return }
             fail("transition did not converge")
+        }
+    }
+
+    @Test fun contrastConvergesWithoutEventsAndSurvivesScreenSwitch() {
+        val f = Fixture()
+        f.keeper.start()
+        f.source.emit(20f)
+        f.source.emit(100f)
+        f.tick()
+        assertEquals(.125f, f.keeper.contrast, .00001f)
+        val timer = f.pending
+        f.keeper.setClock(true)
+        f.keeper.setClock(false)
+        assertSame(timer, f.pending)
+        f.settle()
+        assertEquals(1f, f.keeper.contrast, 0f)
+        assertNull(f.pending)
+        assertEquals(1, f.source.starts)
+        assertTrue(f.contrasts.zipWithNext().all { (a, b) -> b > a && b - a <= .12501f })
+        f.source.emit(20f)
+        f.settle()
+        assertEquals(0f, f.keeper.contrast, 0f)
+    }
+
+    @Test fun contrastUpdatesEvenWhenFirstSensorLevelEqualsClockFallback() {
+        val f = Fixture()
+        f.keeper.setClock(true)
+        f.keeper.start()
+        assertEquals(0f, f.keeper.contrast, 0f)
+        f.source.emit(300f) // .60 = daytime fallback, but now from sensor
+        assertEquals(listOf(1f), f.contrasts)
+        assertNull(f.pending)
+    }
+
+    @Test fun contrastResetsOnPauseDetachAndRejectsStaleOrInvalidReadings() {
+        val f = Fixture()
+        f.keeper.start()
+        f.source.emit(100f)
+        val old = f.source.callbacks.last()
+        f.source.emit(Float.NaN)
+        assertEquals(1f, f.keeper.contrast, 0f)
+        f.keeper.stop()
+        assertEquals(0f, f.keeper.contrast, 0f)
+        f.keeper.setClock(true)
+        f.keeper.start()
+        old(floatArrayOf(100f))
+        f.source.emit(-1f)
+        assertEquals(0f, f.keeper.contrast, 0f)
+        f.source.emit(60f)
+        assertEquals(.5f, f.keeper.contrast, .00001f)
+        assertEquals(listOf(1f, 0f, .5f).size, f.contrasts.size)
+    }
+
+    @Test fun contrastStaysDarkForAbsentFailedAndUnreceivedSensor() {
+        for (available in listOf(false, true)) {
+            val f = Fixture(available)
+            f.keeper.setClock(true)
+            f.keeper.start()
+            f.tick()
+            assertEquals(0f, f.keeper.contrast, 0f)
+            if (!available) f.source.emit(1000f)
+            assertTrue(f.contrasts.isEmpty())
         }
     }
 

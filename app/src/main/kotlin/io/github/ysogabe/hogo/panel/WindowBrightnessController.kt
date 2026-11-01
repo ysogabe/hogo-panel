@@ -12,7 +12,7 @@ import android.os.SystemClock
 import android.util.Log
 
 /** Android 部分は TYPE_LIGHT の受信とメインスレッドの予約のみ。設定・権限は変更しない。 */
-class WindowBrightnessController(context: Context, localMillis: () -> Long, apply: (Float?) -> Unit) {
+class WindowBrightnessController(context: Context, localMillis: () -> Long, apply: (Float?) -> Unit, onContrast: (Float) -> Unit) {
     private val handler = Handler(Looper.getMainLooper())
     private val debug = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
     private var lastLogMs: Long? = null
@@ -33,6 +33,7 @@ class WindowBrightnessController(context: Context, localMillis: () -> Long, appl
             handler.postDelayed(callback, delay)
         },
         cancel = ::cancelTimer,
+        onContrast = onContrast,
     )
 
     fun start() {
@@ -53,7 +54,7 @@ class WindowBrightnessController(context: Context, localMillis: () -> Long, appl
         val now = SystemClock.elapsedRealtime()
         val last = lastLogMs
         if (level == null || keeper.isAtTarget || last == null || now - last >= 1000L) {
-            Log.d(TAG, "lux=${keeper.latestLux ?: "unreceived"} brightness=${level ?: "system"}")
+            Log.d(TAG, "lux=${keeper.latestLux ?: "unreceived"} brightness=${level ?: "system"} contrast=${keeper.contrast}")
             lastLogMs = now
         }
     }
